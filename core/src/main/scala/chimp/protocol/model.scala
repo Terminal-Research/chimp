@@ -233,6 +233,31 @@ final case class CompleteArgument(name: String, value: String) derives Codec
 final case class CompleteResult(completion: Completion) derives Codec
 final case class Completion(values: List[String], total: Option[Int] = None, hasMore: Option[Boolean] = None) derives Codec
 
+// --- Resource model ---
+final case class ResourceDefinition(
+    uri: String,
+    name: Option[String] = None,
+    description: Option[String] = None,
+    mimeType: Option[String] = None
+) derives Codec
+
+final case class ListResourcesRequest(
+    method: String = "resources/list",
+    params: Option[ListResourcesParams] = None
+) derives Codec
+final case class ListResourcesParams(cursor: Option[Cursor] = None) derives Codec
+final case class ListResourcesResponse(
+    resources: List[ResourceDefinition],
+    nextCursor: Option[String] = None
+) derives Codec
+
+final case class ReadResourceRequest(
+    method: String = "resources/read",
+    params: ReadResourceParams
+) derives Codec
+final case class ReadResourceParams(uri: String) derives Codec
+final case class ReadResourceResponse(contents: List[Resource]) derives Codec
+
 // --- Tool model ---
 final case class ToolAnnotations(
     title: Option[String] = None,
@@ -326,8 +351,9 @@ object ToolContent {
 
 final case class Resource(
     uri: String,
-    mimeType: String,
-    text: Option[String] = None
+    mimeType: Option[String] = None,
+    text: Option[String] = None,
+    blob: Option[String] = None
 ) derives Codec
 
 final case class ToolCallResult(

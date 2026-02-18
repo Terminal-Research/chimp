@@ -53,11 +53,13 @@ Are available [here](https://github.com/softwaremill/chimp/tree/master/examples/
 
 ## MCP Protocol
 
-Chimp implements the HTTP transport of the [MCP protocol](https://modelcontextprotocol.io/specification/2025-03-26) (version **2025-03-26**). Only tools are supported, via the following JSON-RPC commands:
+Chimp implements the HTTP transport of the [MCP protocol](https://modelcontextprotocol.io/specification/2025-03-26) (version **2025-03-26**). Tools and resources are supported, via the following JSON-RPC commands:
 
 - Initialization and capabilities negotiation (`initialize`)
 - Listing available tools (`tools/list`)
 - Invoking a tool (`tools/call`)
+- Listing available resources (`resources/list`)
+- Reading resource contents (`resources/read`)
 
 All requests and responses use JSON-RPC 2.0. Tool input schemas are described using JSON Schema, auto-generated from Scala types.
 
@@ -66,12 +68,14 @@ All requests and responses use JSON-RPC 2.0. Tool input schemas are described us
 ## Defining Tools and Server Logic
 
 - Use `tool(name)` to start defining a tool.
+- Use `resource(uri)` to start defining a resource.
 - Add a description and annotations for metadata and hints.
 - Specify the input type (must have a Circe `Codec` and Tapir `Schema`).
 - Provide the server logic as a function from input to `Either[String, String]` (or a generic effect type).
   - Use `handle` to connect the tool definition with the server logic when the use of headers is not required.
   - Use `handleWithHeaders` to connect the tool definition with the server logic when headers are required.
-- Create a Tapir endpoint by providing your tools to `mcpEndpoint` 
+- Provide resource read logic using `handle`/`handleWithHeaders`.
+- Create a Tapir endpoint by providing your tools (and optionally resources) to `mcpEndpoint`
 - Start an HTTP server using your preferred Tapir server interpreter.
 
 ---

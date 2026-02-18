@@ -51,7 +51,41 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         )
     }
 
+  private val recentConversationResource = resource("aion://conversations/recent")
+    .name("Recent conversation history")
+    .description("Returns recent conversation messages.")
+    .mimeType("application/json")
+    .handle(() =>
+      Right(
+        Resource(
+          uri = "ignored-by-handler",
+          text = Some("""[{"role":"user","text":"hello"}]""")
+        )
+      )
+    )
+
+  private val agentCardResource = resource("aion://agent/card")
+    .name("Agent card")
+    .description("Returns the agent card for this server.")
+    .mimeType("application/json")
+    .handle(() =>
+      Right(
+        Resource(
+          uri = "ignored-by-handler",
+          text =
+            Some("""{"name":"Agent","description":"Assistant endpoint"}""")
+        )
+      )
+    )
+
   val handler = McpHandler(List(echoTool, addTool, errorTool, headerEchoTool), "Chimp MCP server", "1.0.0", true)
+  val handlerWithResources = McpHandler(
+    List(echoTool),
+    "Chimp MCP server",
+    "1.0.0",
+    true,
+    List(recentConversationResource, agentCardResource)
+  )
 
   def parseJson(str: String): Json = parse(str).getOrElse(throw new RuntimeException("Invalid JSON"))
 
@@ -95,6 +129,96 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         val resultObj = result.as[ListToolsResponse].getOrElse(fail("Failed to decode result"))
         resultObj.tools.map(_.name).toSet shouldBe Set("echo", "add", "fail", "headerEcho")
       case _ => fail("Expected Response")
+
+  it should "advertise resources capability when resources are configured" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "initialize", id = RequestId("resources-init"))
+    val json = req.asJson
+    // When
+    val response = handlerWithResources.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp = respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[InitializeResult].getOrElse(fail("Failed to decode result"))
+        resultObj.capabilities.resources shouldBe Some(
+          ServerResourcesCapability()
+        )
+      case _ => fail("Expected Response")
+
+  it should "list available resources" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "resources/list", id = RequestId("resources-list"))
+    val json = req.asJson
+    // When
+    val response = handlerWithResources.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp = respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[ListResourcesResponse].getOrElse(fail("Failed to decode result"))
+        resultObj.resources.map(_.uri).toSet shouldBe Set(
+          "aion://conversations/recent",
+          "aion://agent/card"
+        )
+      case _ => fail("Expected Response")
+
+  it should "read an available resource" in:
+    // Given
+    val params = Json.obj(
+      "uri" -> Json.fromString("aion://agent/card")
+    )
+    val req: JSONRPCMessage = Request(
+      method = "resources/read",
+      params = Some(params),
+      id = RequestId("resource-read")
+    )
+    val json = req.asJson
+    // When
+    val response = handlerWithResources.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp = respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[ReadResourceResponse].getOrElse(fail("Failed to decode result"))
+        resultObj.contents should have length 1
+        resultObj.contents.head.uri shouldBe "aion://agent/card"
+        resultObj.contents.head.mimeType shouldBe Some("application/json")
+        resultObj.contents.head.text
+          .getOrElse(fail("Expected resource text content")) should include(
+          "Agent"
+        )
+      case _ => fail("Expected Response")
+
+  it should "return an error for unknown resource" in:
+    // Given
+    val params = Json.obj(
+      "uri" -> Json.fromString("aion://unknown/resource")
+    )
+    val req: JSONRPCMessage = Request(
+      method = "resources/read",
+      params = Some(params),
+      id = RequestId("resource-missing")
+    )
+    val json = req.asJson
+    // When
+    val response = handlerWithResources.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp = respJson.as[JSONRPCMessage].getOrElse(fail("Expected error response"))
+    // Then
+    resp match
+      case Error(_, _, error) =>
+        error.code shouldBe MethodNotFound.code
+        error.message should include("Unknown resource")
+      case _ => fail("Expected Error")
 
   it should "call a tool successfully (echo)" in:
     // Given

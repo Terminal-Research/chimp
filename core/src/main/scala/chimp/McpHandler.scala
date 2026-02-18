@@ -30,10 +30,13 @@ enum McpResponse:
     case JsonResponse(json)  => JsonResponse(json.deepDropNullValues)
     case EmptyAcceptResponse => this
 
-/** The MCP server handles JSON-RPC requests for tool listing, invocation, and initialization.
+/** The MCP server handles JSON-RPC requests for tool listing, invocation,
+  * resource listing/reading, and initialization.
   *
   * @param tools
   *   The list of available server tools.
+  * @param resources
+  *   The list of available server resources.
   * @param name
   *   The server name (for protocol reporting).
   * @param version
@@ -46,11 +49,13 @@ class McpHandler[F[_]](
     tools: List[ServerTool[?, F]],
     name: String,
     version: String,
-    showJsonSchemaMetadata: Boolean
+    showJsonSchemaMetadata: Boolean,
+    resources: List[ServerResource[F]] = Nil
 ):
   private val logger = LoggerFactory.getLogger(classOf[McpHandler[_]])
   private val ProtocolVersion = "2025-03-26"
   private val toolsByName = tools.map(t => t.name -> t).toMap
+  private val resourcesByUri = resources.map(r => r.uri -> r).toMap
 
   /** Converts a ServerTool to its protocol definition. */
   private def toolToDefinition(tool: ServerTool[?, F]): ToolDefinition =
@@ -69,13 +74,18 @@ class McpHandler[F[_]](
     )
 
   private val toolDefs: List[ToolDefinition] = tools.map(toolToDefinition)
+  private val resourceDefs: List[ResourceDefinition] = resources.map(_.definition)
 
   private def protocolError(id: RequestId, code: Int, message: String): JSONRPCMessage.Error =
     logger.debug(s"Protocol error (id=$id, code=$code): $message")
     JSONRPCMessage.Error(id = id, error = JSONRPCErrorObject(code = code, message = message))
 
   private def handleInitialize(id: RequestId): JSONRPCMessage.Response =
-    val capabilities = ServerCapabilities(tools = Some(ServerToolsCapability(listChanged = Some(false))))
+    val capabilities = ServerCapabilities(
+      tools = Some(ServerToolsCapability(listChanged = Some(false))),
+      resources =
+        Option.when(resources.nonEmpty)(ServerResourcesCapability())
+    )
     val result =
       InitializeResult(protocolVersion = ProtocolVersion, capabilities = capabilities, serverInfo = Implementation(name, version))
     JSONRPCMessage.Response(id = id, result = result.asJson)
@@ -83,6 +93,51 @@ class McpHandler[F[_]](
   /** Handles the 'tools/list' JSON-RPC method, returning the list of available tools. */
   private def handleToolsList(id: RequestId): JSONRPCMessage.Response =
     JSONRPCMessage.Response(id = id, result = ListToolsResponse(toolDefs).asJson)
+
+  /** Handles the 'resources/list' JSON-RPC method, returning the list of available resources. */
+  private def handleResourcesList(id: RequestId): JSONRPCMessage.Response =
+    JSONRPCMessage.Response(id = id, result = ListResourcesResponse(resourceDefs).asJson)
+
+  /** Handles the 'resources/read' JSON-RPC method. */
+  private def handleResourcesRead(
+      params: Option[io.circe.Json],
+      id: RequestId,
+      headers: Seq[Header]
+  )(using MonadError[F]): F[JSONRPCMessage] =
+    val uriOpt = params.flatMap(_.hcursor.downField("uri").as[String].toOption)
+    uriOpt match
+      case Some(uri) =>
+        resourcesByUri.get(uri) match
+          case Some(resource) =>
+            resource.logic(headers).map:
+              case Right(content) =>
+                val normalized = content.copy(
+                  uri = resource.uri,
+                  mimeType = content.mimeType.orElse(resource.mimeType)
+                )
+                JSONRPCMessage.Response(
+                  id = id,
+                  result =
+                    ReadResourceResponse(contents = List(normalized)).asJson
+                )
+              case Left(errorMsg) =>
+                protocolError(
+                  id,
+                  JSONRPCErrorCodes.InternalError.code,
+                  errorMsg
+                )
+          case None =>
+            protocolError(
+              id,
+              JSONRPCErrorCodes.MethodNotFound.code,
+              s"Unknown resource: $uri"
+            ).unit
+      case None =>
+        protocolError(
+          id,
+          JSONRPCErrorCodes.InvalidParams.code,
+          "Missing resource uri"
+        ).unit
 
   /** Handles the 'tools/call' JSON-RPC method. Attempts to decode the tool name and arguments, then dispatches to the tool logic. Provides
     * detailed error messages for decode failures.
@@ -144,8 +199,15 @@ class McpHandler[F[_]](
           case "tools/list" =>
             val response = handleToolsList(id)
             McpResponse.JsonResponse((response: JSONRPCMessage).asJson).unit
+          case "resources/list" =>
+            val response = handleResourcesList(id)
+            McpResponse.JsonResponse((response: JSONRPCMessage).asJson).unit
           case "tools/call" =>
             handleToolsCall(params, id, headers).map { response =>
+              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+            }
+          case "resources/read" =>
+            handleResourcesRead(params, id, headers).map { response =>
               McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
             }
           case "initialize" =>
