@@ -17,6 +17,8 @@ private val logger = LoggerFactory.getLogger(classOf[McpHandler[_]])
   *   The list of tools to expose.
   * @param path
   *   The path components at which to expose the MCP server.
+  * @param resources
+  *   The list of resources to expose via `resources/list` and `resources/read`.
   *
   * @tparam F
   *   The effect type. Might be `Identity` for a endpoints with synchronous logic.
@@ -26,9 +28,17 @@ def mcpEndpoint[F[_]](
     path: List[String],
     name: String = "Chimp MCP server",
     version: String = "1.0.0",
-    showJsonSchemaMetadata: Boolean = true
+    showJsonSchemaMetadata: Boolean = true,
+    resources: List[ServerResource[F]] = Nil
 ): ServerEndpoint[Any, F] =
-  val mcpHandler = new McpHandler(tools, name, version, showJsonSchemaMetadata)
+  val mcpHandler =
+    new McpHandler(
+      tools,
+      name,
+      version,
+      showJsonSchemaMetadata,
+      resources
+    )
   val e = infallibleEndpoint.post
     .in(path.foldLeft(emptyInput)((inputSoFar, pathComponent) => inputSoFar / pathComponent))
     .in(extractFromRequest(_.headers))
