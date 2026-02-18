@@ -1,0 +1,58 @@
+name: Publish To GitHub Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to publish (branch, tag, or commit SHA)
+        required: true
+        default: master
+      version:
+        description: Artifact version to publish (example 0.1.7-aion.1)
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_REPO_URL: https://maven.pkg.github.com/${{ github.repository }}
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Configure publishing target
+        run: |
+          mkdir -p ~/.sbt/1.0
+          cat > ~/.sbt/1.0/github-packages.sbt <<EOF
+          ThisBuild / publishTo := Some("GitHub Packages" at "${PACKAGE_REPO_URL}")
+          ThisBuild / credentials += Credentials(
+            "GitHub Package Registry",
+            "maven.pkg.github.com",
+            sys.env.getOrElse("GITHUB_ACTOR", ""),
+            sys.env.getOrElse("GITHUB_TOKEN", "")
+          )
+          EOF
+
+      - name: Publish core module
+        run: |
+          sbt -no-colors \
+            "set ThisBuild / version := \"${{ github.event.inputs.version }}\"" \
+            "core/publish"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
