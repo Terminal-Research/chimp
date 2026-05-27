@@ -27,6 +27,15 @@ final case class ProtocolVersionRegistry(
       .filter(supportedVersionSet)
       .getOrElse(preferredVersion)
 
+  def validate(version: String): Either[String, ProtocolVersion] =
+    ProtocolVersion.from(version) match
+      case Some(protocolVersion) if supportedVersionSet(protocolVersion) =>
+        Right(protocolVersion)
+      case Some(_) =>
+        Left(s"Unsupported MCP protocol version: $version")
+      case None =>
+        Left(s"Invalid MCP protocol version: $version")
+
 object ProtocolVersion:
   val Latest: ProtocolVersion = V2025_11_25
   val Supported: List[ProtocolVersion] = values.toList

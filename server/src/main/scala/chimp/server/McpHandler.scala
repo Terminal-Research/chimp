@@ -18,17 +18,24 @@ enum McpResponse:
   /** Response with no body for accepted notifications. */
   case EmptyAcceptResponse
 
+  /** HTTP error response for transport-level rejection. */
+  case ErrorResponse(code: StatusCode, json: Option[Json] = None)
+
   def statusCode: StatusCode = this match
     case JsonResponse(_)     => StatusCode.Ok
     case EmptyAcceptResponse => StatusCode.Accepted
+    case ErrorResponse(code, _) => code
 
   def body: Option[Json] = this match
-    case JsonResponse(json)  => Some(json)
-    case EmptyAcceptResponse => None
+    case JsonResponse(json)       => Some(json)
+    case EmptyAcceptResponse      => None
+    case ErrorResponse(_, json)   => json
 
   def withNullsDroppedDeep: McpResponse = this match
-    case JsonResponse(json)  => JsonResponse(json.deepDropNullValues)
-    case EmptyAcceptResponse => this
+    case JsonResponse(json)      => JsonResponse(json.deepDropNullValues)
+    case EmptyAcceptResponse     => this
+    case ErrorResponse(code, json) =>
+      ErrorResponse(code, json.map(_.deepDropNullValues))
 
 /** Metadata produced while handling an MCP request. */
 final case class McpResponseMetadata(
@@ -94,6 +101,7 @@ class McpServerHandler[F[_]](
 ):
   private val logger = LoggerFactory.getLogger(classOf[McpServerHandler[_]])
   private val protocolVersions = options.protocolVersionRegistry
+  private val ProtocolVersionHeaderName = "MCP-Protocol-Version"
   private val toolsByName = definition.tools.map(t => t.name -> t).toMap
   private val resourcesByUri =
     definition.resources.map(resource => resource.uri -> resource).toMap
@@ -327,6 +335,16 @@ class McpServerHandler[F[_]](
       request: Json,
       headers: Seq[Header]
   )(using MonadError[F]): F[McpServerResult] =
+    validateProtocolVersionHeader(headers) match
+      case Left(error) =>
+        McpServerResult(rejectProtocolVersionHeader(error)).unit
+      case Right(_) =>
+        doDispatchJsonRpc(request, headers)
+
+  private def doDispatchJsonRpc(
+      request: Json,
+      headers: Seq[Header]
+  )(using MonadError[F]): F[McpServerResult] =
     if request.isArray then McpServerResult(rejectBatchRequest).unit
     else request.as[JSONRPCMessage] match
       case Left(err) =>
@@ -397,6 +415,28 @@ class McpServerHandler[F[_]](
         McpServerResult(
           McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
         ).unit
+
+  private def validateProtocolVersionHeader(
+      headers: Seq[Header]
+  ): Either[String, Option[ProtocolVersion]] =
+    val versions = headers
+      .collect:
+        case header if header.name.equalsIgnoreCase(ProtocolVersionHeaderName) =>
+          header.value.trim
+      .distinct
+    versions match
+      case Nil =>
+        Right(None)
+      case version :: Nil =>
+        protocolVersions.validate(version).map(Some(_))
+      case _ =>
+        Left("Conflicting MCP protocol version headers")
+
+  private def rejectProtocolVersionHeader(message: String): McpResponse =
+    McpResponse.ErrorResponse(
+      StatusCode.BadRequest,
+      Some(Json.obj("error" -> Json.fromString(message)))
+    )
 
   private def rejectBatchRequest: McpResponse =
     val errorResponse =

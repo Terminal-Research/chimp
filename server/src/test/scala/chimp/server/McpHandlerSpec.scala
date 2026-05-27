@@ -7,7 +7,7 @@ import io.circe.parser.*
 import io.circe.syntax.*
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-import sttp.model.Header
+import sttp.model.{Header, StatusCode}
 import sttp.monad.{IdentityMonad, MonadError}
 import sttp.shared.Identity
 import sttp.tapir.Schema
@@ -102,6 +102,15 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
   private def extractJsonFromResponse(response: McpResponse): Json = response match
     case McpResponse.JsonResponse(json)  => json
     case McpResponse.EmptyAcceptResponse => fail("Expected JsonResponse but got EmptyAcceptResponse")
+    case McpResponse.ErrorResponse(code, _) =>
+      fail(s"Expected JsonResponse but got ErrorResponse($code)")
+
+  private def extractErrorBodyFromResponse(response: McpResponse): Json =
+    response match
+      case McpResponse.ErrorResponse(_, Some(json)) => json
+      case McpResponse.ErrorResponse(_, None) =>
+        fail("Expected ErrorResponse body")
+      case other => fail(s"Expected ErrorResponse but got $other")
 
   "McpServerHandler" should "handle decoded transport requests with headers" in:
     // Given
@@ -214,6 +223,74 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
           .getOrElse(fail("Failed to decode result"))
         resultObj.protocolVersion shouldBe "2025-06-18"
       case _ => fail("Expected Response")
+
+  it should "accept supported MCP protocol version headers" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "tools/list", id = RequestId("version-header-ok"))
+    // When
+    val response = handler.handleJsonRpc(
+      req.asJson,
+      Seq(Header("MCP-Protocol-Version", "2025-06-18"))
+    )
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    response.statusCode shouldBe StatusCode.Ok
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[ListToolsResponse].getOrElse(fail("Failed to decode result"))
+        resultObj.tools.map(_.name).toSet should contain("echo")
+      case _ => fail("Expected Response")
+
+  it should "reject invalid MCP protocol version headers with Bad Request" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "tools/list", id = RequestId("version-header-invalid"))
+    // When
+    val response = handler.handleJsonRpc(
+      req.asJson,
+      Seq(Header("MCP-Protocol-Version", "not-a-version"))
+    )
+    val errorBody = extractErrorBodyFromResponse(response)
+    val errorMessage = errorBody.hcursor
+      .downField("error")
+      .as[String]
+      .getOrElse(fail("Expected error message"))
+    // Then
+    response.statusCode shouldBe StatusCode.BadRequest
+    errorMessage should include("Invalid MCP protocol version")
+
+  it should "reject unsupported MCP protocol version headers with Bad Request" in:
+    // Given
+    val pinnedHandler =
+      McpServerHandler(
+        McpServerDefinition(List(echoTool)),
+        McpServerOptions(
+          protocolVersion = "2025-06-18",
+          supportedProtocolVersions = List(ProtocolVersion.V2025_06_18)
+        )
+      )
+    val req: JSONRPCMessage =
+      Request(
+        method = "tools/list",
+        id = RequestId("version-header-unsupported")
+      )
+    // When
+    val response = pinnedHandler.handleJsonRpc(
+      req.asJson,
+      Seq(Header("MCP-Protocol-Version", "2025-11-25"))
+    )
+    val errorBody = extractErrorBodyFromResponse(response)
+    val errorMessage = errorBody.hcursor
+      .downField("error")
+      .as[String]
+      .getOrElse(fail("Expected error message"))
+    // Then
+    response.statusCode shouldBe StatusCode.BadRequest
+    errorMessage should include("Unsupported MCP protocol version")
 
   it should "reject JSON-RPC batch arrays without dispatching subrequests" in:
     // Given
