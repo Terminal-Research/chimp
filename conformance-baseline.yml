@@ -10,7 +10,6 @@ server:
   - json-schema-2020-12
   - elicitation-sep1034-defaults
   - elicitation-sep1330-enums
-  - resources-list
   - resources-read-text
   - resources-read-binary
   - resources-templates-read
