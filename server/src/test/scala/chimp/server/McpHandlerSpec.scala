@@ -246,6 +246,79 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         resultObj.protocolVersion shouldBe "2025-06-18"
       case _ => fail("Expected Response")
 
+  it should "return lifecycle metadata after initialize" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "initialize", id = RequestId("phase-init"))
+    val transportRequest =
+      McpServerRequest(
+        body = req.asJson,
+        sessionPhase = McpSessionPhase.Uninitialized
+      )
+    // When
+    val result = transportHandler.handleWithMetadata(transportRequest)
+    // Then
+    result.metadata.nextSessionPhase shouldBe Some(McpSessionPhase.Initialized)
+
+  it should "reject normal requests before initialize when phase is tracked" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "tools/list", id = RequestId("phase-too-early"))
+    val transportRequest =
+      McpServerRequest(
+        body = req.asJson,
+        sessionPhase = McpSessionPhase.Uninitialized
+      )
+    // When
+    val result = handler.handleWithMetadata(transportRequest)
+    val respJson = extractJsonFromResponse(result.response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Expected error response"))
+    // Then
+    resp match
+      case Error(_, _, error) =>
+        error.code shouldBe InvalidRequest.code
+        error.message should include("initialize must complete")
+      case _ => fail("Expected Error")
+
+  it should "advance to operational after initialized notification" in:
+    // Given
+    val req: JSONRPCMessage = Notification(method = "notifications/initialized")
+    val transportRequest =
+      McpServerRequest(
+        body = req.asJson,
+        sessionPhase = McpSessionPhase.Initialized
+      )
+    // When
+    val result = handler.handleWithMetadata(transportRequest)
+    // Then
+    result.response shouldBe McpResponse.EmptyAcceptResponse
+    result.metadata.nextSessionPhase shouldBe Some(McpSessionPhase.Operational)
+
+  it should "reject normal requests before initialized notification" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(
+        method = "tools/list",
+        id = RequestId("phase-before-initialized")
+      )
+    val transportRequest =
+      McpServerRequest(
+        body = req.asJson,
+        sessionPhase = McpSessionPhase.Initialized
+      )
+    // When
+    val result = handler.handleWithMetadata(transportRequest)
+    val respJson = extractJsonFromResponse(result.response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Expected error response"))
+    // Then
+    resp match
+      case Error(_, _, error) =>
+        error.code shouldBe InvalidRequest.code
+        error.message should include("initialized notification")
+      case _ => fail("Expected Error")
+
   it should "accept supported MCP protocol version headers" in:
     // Given
     val req: JSONRPCMessage =

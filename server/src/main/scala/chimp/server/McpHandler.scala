@@ -38,9 +38,14 @@ enum McpResponse:
     case ErrorResponse(code, json) =>
       ErrorResponse(code, json.map(_.deepDropNullValues))
 
+/** Lifecycle phase associated with an MCP session. */
+enum McpSessionPhase:
+  case Uninitialized, Initialized, Operational
+
 /** Metadata produced while handling an MCP request. */
 final case class McpResponseMetadata(
-    negotiatedProtocolVersion: Option[ProtocolVersion] = None
+    negotiatedProtocolVersion: Option[ProtocolVersion] = None,
+    nextSessionPhase: Option[McpSessionPhase] = None
 )
 
 /** A handled MCP request with response data and protocol metadata. */
@@ -52,7 +57,8 @@ final case class McpServerResult(
 /** A decoded MCP transport request that can be handled without mounting Tapir. */
 final case class McpServerRequest(
     body: Json,
-    headers: Seq[Header] = Seq.empty
+    headers: Seq[Header] = Seq.empty,
+    sessionPhase: McpSessionPhase = McpSessionPhase.Operational
 )
 
 /** Server metadata and serialization options for an MCP handler. */
@@ -120,7 +126,11 @@ class McpServerHandler[F[_]](
   def handleWithMetadata(
       request: McpServerRequest
   )(using MonadError[F]): F[McpServerResult] =
-    handleJsonRpcWithMetadata(request.body, request.headers)
+    handleJsonRpcWithMetadata(
+      request.body,
+      request.headers,
+      request.sessionPhase
+    )
 
   /** Handle one JSON-RPC payload with already extracted transport headers. */
   def handleJsonRpc(
@@ -132,9 +142,10 @@ class McpServerHandler[F[_]](
   /** Handle one JSON-RPC payload and return protocol metadata. */
   def handleJsonRpcWithMetadata(
       request: Json,
-      headers: Seq[Header]
+      headers: Seq[Header],
+      sessionPhase: McpSessionPhase = McpSessionPhase.Operational
   )(using MonadError[F]): F[McpServerResult] =
-    doHandleJsonRpc(request, headers).map: result =>
+    doHandleJsonRpc(request, headers, sessionPhase).map: result =>
       logger.debug(
         s"Request: $request, response: ${result.response.statusCode}, " +
           s"body: ${result.response.body}"
@@ -364,17 +375,19 @@ class McpServerHandler[F[_]](
   /** Handles a JSON-RPC request, dispatching to the appropriate handler. */
   private def doHandleJsonRpc(
       request: Json,
-      headers: Seq[Header]
+      headers: Seq[Header],
+      sessionPhase: McpSessionPhase
   )(using MonadError[F]): F[McpServerResult] =
     validateProtocolVersionHeader(headers) match
       case Left(error) =>
         McpServerResult(rejectProtocolVersionHeader(error)).unit
       case Right(_) =>
-        doDispatchJsonRpc(request, headers)
+        doDispatchJsonRpc(request, headers, sessionPhase)
 
   private def doDispatchJsonRpc(
       request: Json,
-      headers: Seq[Header]
+      headers: Seq[Header],
+      sessionPhase: McpSessionPhase
   )(using MonadError[F]): F[McpServerResult] =
     if request.isArray then McpServerResult(rejectBatchRequest).unit
     else request.as[JSONRPCMessage] match
@@ -389,53 +402,17 @@ class McpServerHandler[F[_]](
           McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
         ).unit
       case Right(JSONRPCMessage.Request(_, method, params, id)) =>
-        method match
-          case "tools/list" =>
-            val response = handleToolsList(id)
-            McpServerResult(
-              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
-            ).unit
-          case "resources/list" =>
-            val response = handleResourcesList(id)
-            McpServerResult(
-              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
-            ).unit
-          case "tools/call" =>
-            handleToolsCall(params, id, headers).map: response =>
-              McpServerResult(
-                McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
-              )
-          case "resources/read" =>
-            handleResourcesRead(params, id, headers).map: response =>
-              McpServerResult(
-                McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
-              )
-          case "initialize" =>
-            val (response, negotiatedVersion) = handleInitialize(params, id)
-            McpServerResult(
-              McpResponse.JsonResponse((response: JSONRPCMessage).asJson),
-              McpResponseMetadata(
-                negotiatedProtocolVersion = Some(negotiatedVersion)
-              )
-            ).unit
-          case "ping" =>
-            val response = JSONRPCMessage.Response(id = id, result = Json.obj())
-            McpServerResult(
-              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
-            ).unit
-          case other =>
+        validateLifecycleRequest(method, sessionPhase) match
+          case Some(error) =>
             val errorResponse =
-              protocolError(
-                id,
-                JSONRPCErrorCodes.MethodNotFound.code,
-                s"Unknown method: $other"
-              )
+              protocolError(id, JSONRPCErrorCodes.InvalidRequest.code, error)
             McpServerResult(
               McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
             ).unit
+          case None =>
+            dispatchRequest(method, params, id, headers)
       case Right(notification: JSONRPCMessage.Notification) =>
-        logger.debug(s"Received notification: ${notification.method}")
-        McpServerResult(McpResponse.EmptyAcceptResponse).unit
+        handleNotification(notification, sessionPhase).unit
       case Right(_) =>
         val errorResponse =
           protocolError(
@@ -446,6 +423,113 @@ class McpServerHandler[F[_]](
         McpServerResult(
           McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
         ).unit
+
+  private def dispatchRequest(
+      method: String,
+      params: Option[Json],
+      id: RequestId,
+      headers: Seq[Header]
+  )(using MonadError[F]): F[McpServerResult] =
+    method match
+      case "tools/list" =>
+        val response = handleToolsList(id)
+        McpServerResult(
+          McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+        ).unit
+      case "resources/list" =>
+        val response = handleResourcesList(id)
+        McpServerResult(
+          McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+        ).unit
+      case "tools/call" =>
+        handleToolsCall(params, id, headers).map: response =>
+          McpServerResult(
+            McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+          )
+      case "resources/read" =>
+        handleResourcesRead(params, id, headers).map: response =>
+          McpServerResult(
+            McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+          )
+      case "initialize" =>
+        val (response, negotiatedVersion) = handleInitialize(params, id)
+        McpServerResult(
+          McpResponse.JsonResponse((response: JSONRPCMessage).asJson),
+          McpResponseMetadata(
+            negotiatedProtocolVersion = Some(negotiatedVersion),
+            nextSessionPhase = Some(McpSessionPhase.Initialized)
+          )
+        ).unit
+      case "ping" =>
+        val response = JSONRPCMessage.Response(id = id, result = Json.obj())
+        McpServerResult(
+          McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+        ).unit
+      case other =>
+        val errorResponse =
+          protocolError(
+            id,
+            JSONRPCErrorCodes.MethodNotFound.code,
+            s"Unknown method: $other"
+          )
+        McpServerResult(
+          McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
+        ).unit
+
+  private def handleNotification(
+      notification: JSONRPCMessage.Notification,
+      sessionPhase: McpSessionPhase
+  ): McpServerResult =
+    logger.debug(s"Received notification: ${notification.method}")
+    validateLifecycleNotification(notification.method, sessionPhase) match
+      case Some(error) =>
+        McpServerResult(rejectLifecycleNotification(error))
+      case None =>
+        val nextPhase = Option.when(
+          notification.method == "notifications/initialized"
+        )(McpSessionPhase.Operational)
+        McpServerResult(
+          McpResponse.EmptyAcceptResponse,
+          McpResponseMetadata(nextSessionPhase = nextPhase)
+        )
+
+  private def validateLifecycleRequest(
+      method: String,
+      sessionPhase: McpSessionPhase
+  ): Option[String] =
+    sessionPhase match
+      case McpSessionPhase.Uninitialized
+          if method != "initialize" && method != "ping" =>
+        Some(s"MCP initialize must complete before request method: $method")
+      case McpSessionPhase.Initialized if method != "ping" =>
+        Some(
+          "MCP initialized notification must be received before request " +
+            s"method: $method"
+        )
+      case _ =>
+        None
+
+  private def validateLifecycleNotification(
+      method: String,
+      sessionPhase: McpSessionPhase
+  ): Option[String] =
+    sessionPhase match
+      case McpSessionPhase.Uninitialized =>
+        Some(s"MCP initialize must complete before notification: $method")
+      case McpSessionPhase.Initialized
+          if method != "notifications/initialized" =>
+        Some(
+          "MCP initialized notification must be received before " +
+            s"notification: $method"
+        )
+      case _ =>
+        None
+
+  private def rejectLifecycleNotification(message: String): McpResponse =
+    McpResponse.ErrorResponse(
+      StatusCode.BadRequest,
+      Some(Json.obj("error" -> Json.fromString(message)))
+    )
 
   private def validateProtocolVersionHeader(
       headers: Seq[Header]
