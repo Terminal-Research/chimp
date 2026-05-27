@@ -34,7 +34,8 @@ def mcpEndpoints[F[_]](
     resources: List[ServerResource[F]] = Nil,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
     supportedProtocolVersions: List[ProtocolVersion] =
-      McpServerOptions.DefaultSupportedProtocolVersions
+      McpServerOptions.DefaultSupportedProtocolVersions,
+    originPolicy: OriginPolicy = OriginPolicy.AllowAll
 ): List[ServerEndpoint[Any, F]] =
   val mcpHandler =
     McpServerHandler(
@@ -47,7 +48,10 @@ def mcpEndpoints[F[_]](
         supportedProtocolVersions = supportedProtocolVersions
       )
     )
-  List(mcpPostEndpoint(path, mcpHandler), mcpGetEndpoint(path))
+  List(
+    mcpPostEndpoint(path, mcpHandler, originPolicy),
+    mcpGetEndpoint(path, originPolicy)
+  )
 
 /** Creates a Tapir POST endpoint description for MCP HTTP server requests. */
 def mcpEndpoint[F[_]](
@@ -59,7 +63,8 @@ def mcpEndpoint[F[_]](
     resources: List[ServerResource[F]] = Nil,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
     supportedProtocolVersions: List[ProtocolVersion] =
-      McpServerOptions.DefaultSupportedProtocolVersions
+      McpServerOptions.DefaultSupportedProtocolVersions,
+    originPolicy: OriginPolicy = OriginPolicy.AllowAll
 ): ServerEndpoint[Any, F] =
   mcpEndpoints(
     tools,
@@ -69,12 +74,14 @@ def mcpEndpoint[F[_]](
     showJsonSchemaMetadata,
     resources,
     protocolVersion,
-    supportedProtocolVersions
+    supportedProtocolVersions,
+    originPolicy
   ).head
 
 private def mcpPostEndpoint[F[_]](
     path: List[String],
-    mcpHandler: McpServerHandler[F]
+    mcpHandler: McpServerHandler[F],
+    originPolicy: OriginPolicy
 ): ServerEndpoint[Any, F] =
   val e = infallibleEndpoint.post
     .in(mcpPath(path))
@@ -88,26 +95,42 @@ private def mcpPostEndpoint[F[_]](
     me => { (input: (Seq[Header], Json)) =>
       val (headers, json) = input
       given MonadError[F] = me
-      mcpHandler
-        .handle(McpServerRequest(json, headers))
-        .map(response => Right((response.statusCode, response.body)))
+      originPolicy.validate(headers) match
+        case Left(error) =>
+          Right(rejectOrigin(error)).unit
+        case Right(_) =>
+          mcpHandler
+            .handle(McpServerRequest(json, headers))
+            .map(response => Right((response.statusCode, response.body)))
     }
   )
 
 private def mcpGetEndpoint[F[_]](
-    path: List[String]
+    path: List[String],
+    originPolicy: OriginPolicy
 ): ServerEndpoint[Any, F] =
   val e = infallibleEndpoint.get
     .in(mcpPath(path))
+    .in(extractFromRequest(_.headers))
     .out(statusCode)
     .out(jsonBody[Option[Json]])
 
   ServerEndpoint.public(
     e,
-    me => { (_: Unit) =>
+    me => { (headers: Seq[Header]) =>
       given MonadError[F] = me
-      Right((StatusCode.MethodNotAllowed, Option.empty[Json])).unit
+      originPolicy.validate(headers) match
+        case Left(error) =>
+          Right(rejectOrigin(error)).unit
+        case Right(_) =>
+          Right((StatusCode.MethodNotAllowed, Option.empty[Json])).unit
     }
+  )
+
+private def rejectOrigin(error: String): (StatusCode, Option[Json]) =
+  (
+    StatusCode.Forbidden,
+    Some(Json.obj("error" -> Json.fromString(error)))
   )
 
 private def mcpPath(path: List[String]): EndpointInput[Unit] =
