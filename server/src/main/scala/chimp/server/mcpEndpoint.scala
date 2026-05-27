@@ -11,9 +11,8 @@ import sttp.tapir.server.ServerEndpoint
 
 /** Creates Tapir endpoint descriptions for MCP Streamable HTTP requests.
   *
-  * The returned endpoints include POST request handling and an explicit
-  * GET endpoint that returns `405 Method Not Allowed`, for servers that do not
-  * offer an SSE stream.
+  * The returned endpoints include POST request handling and an explicit GET endpoint that returns `405 Method Not Allowed`, for servers
+  * that do not offer an SSE stream.
   *
   * @param tools
   *   The list of tools to expose.
@@ -33,8 +32,7 @@ def mcpEndpoints[F[_]](
     showJsonSchemaMetadata: Boolean = true,
     resources: List[ServerResource[F]] = Nil,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
-    supportedProtocolVersions: List[ProtocolVersion] =
-      McpServerOptions.DefaultSupportedProtocolVersions,
+    supportedProtocolVersions: List[ProtocolVersion] = McpServerOptions.DefaultSupportedProtocolVersions,
     originPolicy: OriginPolicy = OriginPolicy.AllowAll
 ): List[ServerEndpoint[Any, F]] =
   val mcpHandler =
@@ -62,8 +60,7 @@ def mcpEndpoint[F[_]](
     showJsonSchemaMetadata: Boolean = true,
     resources: List[ServerResource[F]] = Nil,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
-    supportedProtocolVersions: List[ProtocolVersion] =
-      McpServerOptions.DefaultSupportedProtocolVersions,
+    supportedProtocolVersions: List[ProtocolVersion] = McpServerOptions.DefaultSupportedProtocolVersions,
     originPolicy: OriginPolicy = OriginPolicy.AllowAll
 ): ServerEndpoint[Any, F] =
   mcpEndpoints(
@@ -134,6 +131,4 @@ private def rejectOrigin(error: String): (StatusCode, Option[Json]) =
   )
 
 private def mcpPath(path: List[String]): EndpointInput[Unit] =
-  path.foldLeft(emptyInput)((inputSoFar, pathComponent) =>
-    inputSoFar / pathComponent
-  )
+  path.foldLeft(emptyInput)((inputSoFar, pathComponent) => inputSoFar / pathComponent)

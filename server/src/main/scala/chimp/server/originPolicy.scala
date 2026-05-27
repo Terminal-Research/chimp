@@ -36,4 +36,3 @@ enum OriginPolicy:
 object OriginPolicy:
   def allowOnly(origins: Set[String]): OriginPolicy =
     OriginPolicy.AllowOnly(origins)
-

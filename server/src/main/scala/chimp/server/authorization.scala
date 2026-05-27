@@ -83,14 +83,10 @@ object ProtectedResourceMetadata:
   private def parseResourceUri(resource: String): Either[String, URI] =
     try
       val uri = URI(resource)
-      if uri.getScheme == null || uri.getRawAuthority == null then
-        Left(s"Protected resource URI must be absolute: $resource")
-      else if uri.getRawFragment != null then
-        Left(s"Protected resource URI must not contain a fragment: $resource")
-      else if uri.getRawUserInfo != null then
-        Left(s"Protected resource URI must not contain userinfo: $resource")
+      if uri.getScheme == null || uri.getRawAuthority == null then Left(s"Protected resource URI must be absolute: $resource")
+      else if uri.getRawFragment != null then Left(s"Protected resource URI must not contain a fragment: $resource")
+      else if uri.getRawUserInfo != null then Left(s"Protected resource URI must not contain userinfo: $resource")
       else Right(uri)
     catch
       case ex: IllegalArgumentException =>
         Left(s"Invalid protected resource URI: ${ex.getMessage}")
-

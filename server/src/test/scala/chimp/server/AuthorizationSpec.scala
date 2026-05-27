@@ -31,16 +31,19 @@ class AuthorizationSpec extends AnyFlatSpec with Matchers:
     )
 
   it should "reject invalid protected resource URIs" in:
-    val error = ProtectedResourceMetadata.metadataUrlForResource(
-      "https://mcp.example.com/server/mcp#fragment"
-    ).left.toOption.getOrElse(fail("Expected invalid resource URI"))
+    val error = ProtectedResourceMetadata
+      .metadataUrlForResource(
+        "https://mcp.example.com/server/mcp#fragment"
+      )
+      .left
+      .toOption
+      .getOrElse(fail("Expected invalid resource URI"))
 
     error should include("must not contain a fragment")
 
   "WWWAuthenticateChallenge" should "render a bearer metadata challenge" in:
     val challenge = WWWAuthenticateChallenge(
-      resourceMetadata =
-        "https://mcp.example.com/.well-known/oauth-protected-resource/server/mcp",
+      resourceMetadata = "https://mcp.example.com/.well-known/oauth-protected-resource/server/mcp",
       error = Some("invalid_token"),
       errorDescription = Some("Token expired")
     )
@@ -48,5 +51,5 @@ class AuthorizationSpec extends AnyFlatSpec with Matchers:
     challenge.header.name shouldBe "WWW-Authenticate"
     challenge.header.value shouldBe
       "Bearer resource_metadata=\"" +
-        "https://mcp.example.com/.well-known/oauth-protected-resource/server/mcp" +
-        "\", error=\"invalid_token\", error_description=\"Token expired\""
+      "https://mcp.example.com/.well-known/oauth-protected-resource/server/mcp" +
+      "\", error=\"invalid_token\", error_description=\"Token expired\""

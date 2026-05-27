@@ -23,18 +23,18 @@ enum McpResponse:
   case ErrorResponse(code: StatusCode, json: Option[Json] = None)
 
   def statusCode: StatusCode = this match
-    case JsonResponse(_)     => StatusCode.Ok
-    case EmptyAcceptResponse => StatusCode.Accepted
+    case JsonResponse(_)        => StatusCode.Ok
+    case EmptyAcceptResponse    => StatusCode.Accepted
     case ErrorResponse(code, _) => code
 
   def body: Option[Json] = this match
-    case JsonResponse(json)       => Some(json)
-    case EmptyAcceptResponse      => None
-    case ErrorResponse(_, json)   => json
+    case JsonResponse(json)     => Some(json)
+    case EmptyAcceptResponse    => None
+    case ErrorResponse(_, json) => json
 
   def withNullsDroppedDeep: McpResponse = this match
-    case JsonResponse(json)      => JsonResponse(json.deepDropNullValues)
-    case EmptyAcceptResponse     => this
+    case JsonResponse(json)        => JsonResponse(json.deepDropNullValues)
+    case EmptyAcceptResponse       => this
     case ErrorResponse(code, json) =>
       ErrorResponse(code, json.map(_.deepDropNullValues))
 
@@ -67,8 +67,7 @@ final case class McpServerOptions(
     version: String = "1.0.0",
     showJsonSchemaMetadata: Boolean = true,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
-    supportedProtocolVersions: List[ProtocolVersion] =
-      McpServerOptions.DefaultSupportedProtocolVersions
+    supportedProtocolVersions: List[ProtocolVersion] = McpServerOptions.DefaultSupportedProtocolVersions
 ):
   private[server] val protocolVersionRegistry: ProtocolVersionRegistry =
     val preferredProtocolVersion = ProtocolVersion
@@ -92,10 +91,8 @@ final case class McpServerDefinition[F[_]](
 
 /** Transport-agnostic MCP protocol handler.
   *
-  * This class owns JSON-RPC method dispatch and protocol response shaping. HTTP
-  * libraries and application routers can adapt incoming requests into
-  * [[McpServerRequest]] and adapt the returned [[McpResponse]] back to their
-  * transport-specific response type.
+  * This class owns JSON-RPC method dispatch and protocol response shaping. HTTP libraries and application routers can adapt incoming
+  * requests into [[McpServerRequest]] and adapt the returned [[McpResponse]] back to their transport-specific response type.
   *
   * @param definition
   *   tool and resource definitions exposed by the server
@@ -236,19 +233,21 @@ class McpServerHandler[F[_]](
       case Some(uri) =>
         resourcesByUri.get(uri) match
           case Some(resource) =>
-            resource.logic(headers).map:
-              case Right(content) =>
-                val normalized = normalizeResourceContent(content, resource)
-                JSONRPCMessage.Response(
-                  id = id,
-                  result = ReadResourceResult(List(normalized)).asJson
-                )
-              case Left(errorMsg) =>
-                protocolError(
-                  id,
-                  JSONRPCErrorCodes.InternalError.code,
-                  errorMsg
-                )
+            resource
+              .logic(headers)
+              .map:
+                case Right(content) =>
+                  val normalized = normalizeResourceContent(content, resource)
+                  JSONRPCMessage.Response(
+                    id = id,
+                    result = ReadResourceResult(List(normalized)).asJson
+                  )
+                case Left(errorMsg) =>
+                  protocolError(
+                    id,
+                    JSONRPCErrorCodes.InternalError.code,
+                    errorMsg
+                  )
           case None =>
             protocolError(
               id,
@@ -290,7 +289,8 @@ class McpServerHandler[F[_]](
   )(using MonadError[F]): F[JSONRPCMessage] =
     val toolNameOpt =
       params.flatMap(_.hcursor.downField("name").as[String].toOption)
-    val args = params.flatMap(_.hcursor.downField("arguments").focus)
+    val args = params
+      .flatMap(_.hcursor.downField("arguments").focus)
       .getOrElse(Json.obj())
     toolNameOpt match
       case Some(toolName) =>
@@ -364,7 +364,7 @@ class McpServerHandler[F[_]](
       output: ToolOutput
   ): Either[String, CallToolResult] =
     if tool.outputSchema.nonEmpty && !output.isError &&
-        output.structuredContent.isEmpty
+      output.structuredContent.isEmpty
     then
       Left(
         s"Tool '${tool.name}' declared outputSchema but did not return " +
@@ -390,39 +390,40 @@ class McpServerHandler[F[_]](
       sessionPhase: McpSessionPhase
   )(using MonadError[F]): F[McpServerResult] =
     if request.isArray then McpServerResult(rejectBatchRequest).unit
-    else request.as[JSONRPCMessage] match
-      case Left(err) =>
-        val errorResponse =
-          protocolError(
-            RequestId("null"),
-            JSONRPCErrorCodes.ParseError.code,
-            s"Parse error: ${err.message}"
-          )
-        McpServerResult(
-          McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
-        ).unit
-      case Right(JSONRPCMessage.Request(_, method, params, id)) =>
-        validateLifecycleRequest(method, sessionPhase) match
-          case Some(error) =>
-            val errorResponse =
-              protocolError(id, JSONRPCErrorCodes.InvalidRequest.code, error)
-            McpServerResult(
-              McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
-            ).unit
-          case None =>
-            dispatchRequest(method, params, id, headers)
-      case Right(notification: JSONRPCMessage.Notification) =>
-        handleNotification(notification, sessionPhase).unit
-      case Right(_) =>
-        val errorResponse =
-          protocolError(
-            RequestId("null"),
-            JSONRPCErrorCodes.InvalidRequest.code,
-            "Invalid request type"
-          )
-        McpServerResult(
-          McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
-        ).unit
+    else
+      request.as[JSONRPCMessage] match
+        case Left(err) =>
+          val errorResponse =
+            protocolError(
+              RequestId("null"),
+              JSONRPCErrorCodes.ParseError.code,
+              s"Parse error: ${err.message}"
+            )
+          McpServerResult(
+            McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
+          ).unit
+        case Right(JSONRPCMessage.Request(_, method, params, id)) =>
+          validateLifecycleRequest(method, sessionPhase) match
+            case Some(error) =>
+              val errorResponse =
+                protocolError(id, JSONRPCErrorCodes.InvalidRequest.code, error)
+              McpServerResult(
+                McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
+              ).unit
+            case None =>
+              dispatchRequest(method, params, id, headers)
+        case Right(notification: JSONRPCMessage.Notification) =>
+          handleNotification(notification, sessionPhase).unit
+        case Right(_) =>
+          val errorResponse =
+            protocolError(
+              RequestId("null"),
+              JSONRPCErrorCodes.InvalidRequest.code,
+              "Invalid request type"
+            )
+          McpServerResult(
+            McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
+          ).unit
 
   private def dispatchRequest(
       method: String,
@@ -498,8 +499,7 @@ class McpServerHandler[F[_]](
       sessionPhase: McpSessionPhase
   ): Option[String] =
     sessionPhase match
-      case McpSessionPhase.Uninitialized
-          if method != "initialize" && method != "ping" =>
+      case McpSessionPhase.Uninitialized if method != "initialize" && method != "ping" =>
         Some(s"MCP initialize must complete before request method: $method")
       case McpSessionPhase.Initialized if method != "ping" =>
         Some(
@@ -516,8 +516,7 @@ class McpServerHandler[F[_]](
     sessionPhase match
       case McpSessionPhase.Uninitialized =>
         Some(s"MCP initialize must complete before notification: $method")
-      case McpSessionPhase.Initialized
-          if method != "notifications/initialized" =>
+      case McpSessionPhase.Initialized if method != "notifications/initialized" =>
         Some(
           "MCP initialized notification must be received before " +
             s"notification: $method"

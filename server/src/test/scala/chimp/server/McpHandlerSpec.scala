@@ -77,7 +77,7 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
       Right(
         ResourceContents.Text(
           uri = "ignored-by-handler",
-          text = """[{"role":"user","text":"hello"}]""",
+          text = """[{"role":"user","text":"hello"}]"""
         )
       )
     )
@@ -122,15 +122,15 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
 
   // Helper function to extract JSON from McpResponse for testing
   private def extractJsonFromResponse(response: McpResponse): Json = response match
-    case McpResponse.JsonResponse(json)  => json
-    case McpResponse.EmptyAcceptResponse => fail("Expected JsonResponse but got EmptyAcceptResponse")
+    case McpResponse.JsonResponse(json)     => json
+    case McpResponse.EmptyAcceptResponse    => fail("Expected JsonResponse but got EmptyAcceptResponse")
     case McpResponse.ErrorResponse(code, _) =>
       fail(s"Expected JsonResponse but got ErrorResponse($code)")
 
   private def extractErrorBodyFromResponse(response: McpResponse): Json =
     response match
       case McpResponse.ErrorResponse(_, Some(json)) => json
-      case McpResponse.ErrorResponse(_, None) =>
+      case McpResponse.ErrorResponse(_, None)       =>
         fail("Expected ErrorResponse body")
       case other => fail(s"Expected ErrorResponse but got $other")
 
