@@ -34,10 +34,15 @@ object Main:
       .orElse(sys.env.get("CHIMP_CONFORMANCE_PORT").map(_.toInt))
       .getOrElse(0)
 
-    val endpoint = mcpEndpoint(tools, List("mcp"), name = "chimp-conformance-server", version = "0.1.0")
+    val endpoints = mcpEndpoints(
+      tools,
+      List("mcp"),
+      name = "chimp-conformance-server",
+      version = "0.1.0"
+    )
 
     supervised:
-      val binding = NettySyncServer().port(requestedPort).addEndpoint(endpoint).start()
+      val binding = NettySyncServer().port(requestedPort).addEndpoints(endpoints).start()
       println(s"http://127.0.0.1:${binding.port}/mcp")
       System.out.flush()
       Thread.currentThread.join()
