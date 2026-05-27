@@ -1,15 +1,12 @@
 package chimp.server
 
 import io.circe.Json
-import org.slf4j.LoggerFactory
 import sttp.monad.MonadError
 import sttp.monad.syntax.*
 import sttp.tapir.*
 import sttp.tapir.json.circe.*
 import sttp.tapir.server.ServerEndpoint
 import sttp.model.Header
-
-private val logger = LoggerFactory.getLogger(classOf[McpHandler[_]])
 
 /** Creates a Tapir endpoint description, which will handle MCP HTTP server requests, using the provided tools.
   *
@@ -32,12 +29,13 @@ def mcpEndpoint[F[_]](
     resources: List[ServerResource[F]] = Nil
 ): ServerEndpoint[Any, F] =
   val mcpHandler =
-    new McpHandler(
-      tools,
-      name,
-      version,
-      showJsonSchemaMetadata,
-      resources
+    McpServerHandler(
+      McpServerDefinition(tools, resources),
+      McpServerOptions(
+        name = name,
+        version = version,
+        showJsonSchemaMetadata = showJsonSchemaMetadata
+      )
     )
   val e = infallibleEndpoint.post
     .in(path.foldLeft(emptyInput)((inputSoFar, pathComponent) => inputSoFar / pathComponent))
@@ -52,7 +50,7 @@ def mcpEndpoint[F[_]](
       val (headers, json) = input
       given MonadError[F] = me
       mcpHandler
-        .handleJsonRpc(json, headers)
+        .handle(McpServerRequest(json, headers))
         .map(response => Right((response.statusCode, response.body)))
     }
   )

@@ -85,6 +85,14 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
     true,
     List(recentConversationResource, agentCardResource)
   )
+  val transportHandler = McpServerHandler(
+    McpServerDefinition(List(headerEchoTool)),
+    McpServerOptions(
+      name = "Transport handler test",
+      version = "1.0.0",
+      protocolVersion = "2025-06-18"
+    )
+  )
 
   def parseJson(str: String): Json = parse(str).getOrElse(throw new RuntimeException("Invalid JSON"))
 
@@ -94,6 +102,54 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
   private def extractJsonFromResponse(response: McpResponse): Json = response match
     case McpResponse.JsonResponse(json)  => json
     case McpResponse.EmptyAcceptResponse => fail("Expected JsonResponse but got EmptyAcceptResponse")
+
+  "McpServerHandler" should "handle decoded transport requests with headers" in:
+    // Given
+    val params = Json.obj(
+      "name" -> Json.fromString("headerEcho"),
+      "arguments" -> Json.obj("dummy" -> Json.fromString("irrelevant"))
+    )
+    val req: JSONRPCMessage =
+      Request(method = "tools/call", params = Some(params), id = RequestId("transport1"))
+    val transportRequest =
+      McpServerRequest(
+        body = req.asJson,
+        headers = Seq(Header("header-name", "transport-header"))
+      )
+    // When
+    val response = transportHandler.handle(transportRequest)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[CallToolResult].getOrElse(fail("Failed to decode result"))
+        resultObj.isError shouldBe false
+        resultObj.content.head shouldBe ToolContent.Text(
+          "text",
+          "header name: header-name, header value: transport-header"
+        )
+      case _ => fail("Expected Response")
+
+  it should "return the configured protocol version from initialize" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "initialize", id = RequestId("transport-init"))
+    val transportRequest = McpServerRequest(body = req.asJson)
+    // When
+    val response = transportHandler.handle(transportRequest)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[InitializeResult].getOrElse(fail("Failed to decode result"))
+        resultObj.protocolVersion shouldBe "2025-06-18"
+      case _ => fail("Expected Response")
 
   "McpHandler" should "respond to initialize" in:
     // Given

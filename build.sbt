@@ -6,11 +6,13 @@ val scalaTestV = "3.2.20"
 val circeV = "0.14.15"
 val slf4jV = "2.0.18"
 val logbackV = "1.5.32"
-val tapirV = "1.13.19"
+val tapirV = "1.11.36"
 val sttpClientV = "4.0.24"
 val zioV = "2.1.26"
 val zioProcessV = "0.8.0"
 val testcontainersScalaV = "0.41.8"
+
+ThisBuild / version := "0.1.7-aion.2-SNAPSHOT"
 
 lazy val verifyExamplesCompileUsingScalaCli = taskKey[Unit]("Verify that each example compiles using Scala CLI")
 
