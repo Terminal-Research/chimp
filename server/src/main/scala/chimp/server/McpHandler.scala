@@ -8,6 +8,7 @@ import sttp.apispec.circe.*
 import sttp.model.{Header, StatusCode}
 import sttp.monad.MonadError
 import sttp.monad.syntax.*
+import sttp.tapir.Schema
 import sttp.tapir.docs.apispec.schema.TapirSchemaToJsonSchema
 
 /** Represents different types of HTTP responses for JSON-RPC requests. */
@@ -142,19 +143,11 @@ class McpServerHandler[F[_]](
 
   /** Converts a ServerTool to its protocol definition. */
   private def toolToDefinition(tool: ServerTool[?, F]): ToolDefinition =
-    val jsonSchema =
-      val base =
-        TapirSchemaToJsonSchema(
-          tool.inputSchema,
-          markOptionsAsNullable = false
-        )
-      if options.showJsonSchemaMetadata then base
-      else base.copy($schema = None)
-
     ToolDefinition(
       name = tool.name,
       description = tool.description,
-      inputSchema = jsonSchema.asJson,
+      inputSchema = schemaToJson(tool.inputSchema),
+      outputSchema = tool.outputSchema.map(schemaToJson),
       annotations = tool.annotations.map: annotations =>
         ToolAnnotations(
           annotations.title,
@@ -164,6 +157,17 @@ class McpServerHandler[F[_]](
           annotations.openWorldHint
         )
     )
+
+  private def schemaToJson(schema: Schema[?]): Json =
+    val base =
+      TapirSchemaToJsonSchema(
+        schema,
+        markOptionsAsNullable = false
+      )
+    val schemaJson =
+      if options.showJsonSchemaMetadata then base
+      else base.copy($schema = None)
+    schemaJson.asJson
 
   private def protocolError(
       id: RequestId,
@@ -312,23 +316,50 @@ class McpServerHandler[F[_]](
       id: RequestId,
       headers: Seq[Header]
   )(using MonadError[F]): F[JSONRPCMessage] =
-    tool
-      .logic(decodedInput, headers)
-      .map:
-        case Right(result) =>
-          val callResult =
-            CallToolResult(
-              content = List(ToolContent.Text(text = result)),
-              isError = false
-            )
-          JSONRPCMessage.Response(id = id, result = callResult.asJson)
-        case Left(errorMsg) =>
-          val callResult =
-            CallToolResult(
-              content = List(ToolContent.Text(text = errorMsg)),
-              isError = true
-            )
-          JSONRPCMessage.Response(id = id, result = callResult.asJson)
+    tool.logic match
+      case ServerToolLogic.Text(logic) =>
+        logic(decodedInput, headers).map:
+          case Right(result) =>
+            val callResult =
+              CallToolResult(
+                content = List(ToolContent.Text(text = result)),
+                isError = false
+              )
+            JSONRPCMessage.Response(id = id, result = callResult.asJson)
+          case Left(errorMsg) =>
+            val callResult =
+              CallToolResult(
+                content = List(ToolContent.Text(text = errorMsg)),
+                isError = true
+              )
+            JSONRPCMessage.Response(id = id, result = callResult.asJson)
+      case ServerToolLogic.Output(logic) =>
+        logic(decodedInput, headers).map: output =>
+          handleToolOutput(tool, output, id)
+
+  private def handleToolOutput[T](
+      tool: ServerTool[T, F],
+      output: ToolOutput,
+      id: RequestId
+  ): JSONRPCMessage =
+    validateToolOutput(tool, output) match
+      case Right(callResult) =>
+        JSONRPCMessage.Response(id = id, result = callResult.asJson)
+      case Left(error) =>
+        protocolError(id, JSONRPCErrorCodes.InternalError.code, error)
+
+  private def validateToolOutput[T](
+      tool: ServerTool[T, F],
+      output: ToolOutput
+  ): Either[String, CallToolResult] =
+    if tool.outputSchema.nonEmpty && !output.isError &&
+        output.structuredContent.isEmpty
+    then
+      Left(
+        s"Tool '${tool.name}' declared outputSchema but did not return " +
+          "structuredContent"
+      )
+    else Right(output.toCallToolResult)
 
   /** Handles a JSON-RPC request, dispatching to the appropriate handler. */
   private def doHandleJsonRpc(

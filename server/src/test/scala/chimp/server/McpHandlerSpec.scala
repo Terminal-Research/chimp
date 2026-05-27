@@ -19,6 +19,7 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
   // Simple test input types
   case class EchoInput(message: String) derives Schema, Codec
   case class AddInput(a: Int, b: Int) derives Schema, Codec
+  case class AddOutput(total: Int) derives Schema, Codec
 
   // Test tools
   val echoTool = tool("echo")
@@ -30,6 +31,23 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
     .description("Adds two numbers.")
     .input[AddInput]
     .handle(in => Right((in.a + in.b).toString))
+
+  val structuredAddTool = tool("structuredAdd")
+    .description("Adds two numbers and returns structured output.")
+    .output[AddOutput]
+    .input[AddInput]
+    .handleOutput: in =>
+      val total = in.a + in.b
+      ToolOutput.structured(
+        List(ToolContent.Text(text = total.toString)),
+        Json.obj("total" -> Json.fromInt(total))
+      )
+
+  val invalidStructuredTool = tool("invalidStructured")
+    .description("Declares structured output but returns text only.")
+    .output[AddOutput]
+    .input[AddInput]
+    .handleOutput(in => ToolOutput.text((in.a + in.b).toString))
 
   val errorTool = tool("fail")
     .description("Always fails.")
@@ -85,6 +103,10 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
     true,
     List(recentConversationResource, agentCardResource)
   )
+  val structuredHandler =
+    McpHandler(List(structuredAddTool), "Chimp MCP server", "1.0.0", true)
+  val invalidStructuredHandler =
+    McpHandler(List(invalidStructuredTool), "Chimp MCP server", "1.0.0", true)
   val transportHandler = McpServerHandler(
     McpServerDefinition(List(headerEchoTool)),
     McpServerOptions(
@@ -361,6 +383,86 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         val resultObj = result.as[ListToolsResponse].getOrElse(fail("Failed to decode result"))
         resultObj.tools.map(_.name).toSet shouldBe Set("echo", "add", "fail", "headerEcho")
       case _ => fail("Expected Response")
+
+  it should "include output schemas in tool definitions" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "tools/list", id = RequestId("structured-list"))
+    val json = req.asJson
+    // When
+    val response = structuredHandler.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[ListToolsResponse].getOrElse(fail("Failed to decode result"))
+        val toolDef = resultObj.tools.find(_.name == "structuredAdd").get
+        val outputSchema =
+          toolDef.outputSchema.getOrElse(fail("Expected output schema"))
+        outputSchema.hcursor
+          .downField("properties")
+          .downField("total")
+          .focus
+          .isDefined shouldBe true
+      case _ => fail("Expected Response")
+
+  it should "return structured content from structured-output tools" in:
+    // Given
+    val params = Json.obj(
+      "name" -> Json.fromString("structuredAdd"),
+      "arguments" -> Json.obj("a" -> Json.fromInt(2), "b" -> Json.fromInt(3))
+    )
+    val req: JSONRPCMessage =
+      Request(
+        method = "tools/call",
+        params = Some(params),
+        id = RequestId("structured-call")
+      )
+    val json = req.asJson
+    // When
+    val response = structuredHandler.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[CallToolResult].getOrElse(fail("Failed to decode result"))
+        resultObj.isError shouldBe false
+        resultObj.content.head shouldBe ToolContent.Text("text", "5")
+        resultObj.structuredContent.flatMap(
+          _.hcursor.downField("total").as[Int].toOption
+        ) shouldBe Some(5)
+      case _ => fail("Expected Response")
+
+  it should "reject schema-declared tool output without structured content" in:
+    // Given
+    val params = Json.obj(
+      "name" -> Json.fromString("invalidStructured"),
+      "arguments" -> Json.obj("a" -> Json.fromInt(2), "b" -> Json.fromInt(3))
+    )
+    val req: JSONRPCMessage =
+      Request(
+        method = "tools/call",
+        params = Some(params),
+        id = RequestId("structured-invalid")
+      )
+    val json = req.asJson
+    // When
+    val response = invalidStructuredHandler.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Expected error response"))
+    // Then
+    resp match
+      case Error(_, _, error) =>
+        error.code shouldBe InternalError.code
+        error.message should include("declared outputSchema")
+      case _ => fail("Expected Error")
 
   it should "advertise resources capability when resources are configured" in:
     // Given
