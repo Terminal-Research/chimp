@@ -10,6 +10,9 @@ on:
       version:
         description: Artifact version to publish (example 0.1.7-aion.2)
         required: true
+  push:
+    tags:
+      - publish-github-packages-*
 
 permissions:
   contents: read
@@ -24,7 +27,7 @@ jobs:
       - name: Checkout selected ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -51,8 +54,12 @@ jobs:
 
       - name: Publish library modules
         run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME#publish-github-packages-}"
+          fi
           sbt -no-colors \
-            "set ThisBuild / version := \"${{ github.event.inputs.version }}\"" \
+            "set ThisBuild / version := \"$VERSION\"" \
             "core/publish" \
             "server/publish" \
             "client/publish" \
