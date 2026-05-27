@@ -151,6 +151,70 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         resultObj.protocolVersion shouldBe "2025-06-18"
       case _ => fail("Expected Response")
 
+  it should "negotiate a supported protocol version from initialize" in:
+    // Given
+    val params = Json.obj(
+      "protocolVersion" -> Json.fromString("2025-06-18")
+    )
+    val req: JSONRPCMessage =
+      Request(
+        method = "initialize",
+        params = Some(params),
+        id = RequestId("negotiated-init")
+      )
+    // When
+    val result = handler.handleJsonRpcWithMetadata(req.asJson, Seq.empty)
+    val respJson = extractJsonFromResponse(result.response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    result.metadata.negotiatedProtocolVersion shouldBe Some(
+      ProtocolVersion.V2025_06_18
+    )
+    resp match
+      case Response(_, _, responseResult) =>
+        val resultObj = responseResult
+          .as[InitializeResult]
+          .getOrElse(fail("Failed to decode result"))
+        resultObj.protocolVersion shouldBe "2025-06-18"
+      case _ => fail("Expected Response")
+
+  it should "fall back to the preferred version when requested version is unsupported" in:
+    // Given
+    val pinnedHandler =
+      McpServerHandler(
+        McpServerDefinition(List(echoTool)),
+        McpServerOptions(
+          protocolVersion = "2025-06-18",
+          supportedProtocolVersions = List(ProtocolVersion.V2025_06_18)
+        )
+      )
+    val params = Json.obj(
+      "protocolVersion" -> Json.fromString("2025-11-25")
+    )
+    val req: JSONRPCMessage =
+      Request(
+        method = "initialize",
+        params = Some(params),
+        id = RequestId("fallback-init")
+      )
+    // When
+    val result = pinnedHandler.handleJsonRpcWithMetadata(req.asJson, Seq.empty)
+    val respJson = extractJsonFromResponse(result.response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    result.metadata.negotiatedProtocolVersion shouldBe Some(
+      ProtocolVersion.V2025_06_18
+    )
+    resp match
+      case Response(_, _, responseResult) =>
+        val resultObj = responseResult
+          .as[InitializeResult]
+          .getOrElse(fail("Failed to decode result"))
+        resultObj.protocolVersion shouldBe "2025-06-18"
+      case _ => fail("Expected Response")
+
   it should "reject JSON-RPC batch arrays without dispatching subrequests" in:
     // Given
     var callCount = 0

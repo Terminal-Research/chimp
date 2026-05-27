@@ -30,6 +30,17 @@ enum McpResponse:
     case JsonResponse(json)  => JsonResponse(json.deepDropNullValues)
     case EmptyAcceptResponse => this
 
+/** Metadata produced while handling an MCP request. */
+final case class McpResponseMetadata(
+    negotiatedProtocolVersion: Option[ProtocolVersion] = None
+)
+
+/** A handled MCP request with response data and protocol metadata. */
+final case class McpServerResult(
+    response: McpResponse,
+    metadata: McpResponseMetadata = McpResponseMetadata()
+)
+
 /** A decoded MCP transport request that can be handled without mounting Tapir. */
 final case class McpServerRequest(
     body: Json,
@@ -41,11 +52,23 @@ final case class McpServerOptions(
     name: String = "Chimp MCP server",
     version: String = "1.0.0",
     showJsonSchemaMetadata: Boolean = true,
-    protocolVersion: String = McpServerOptions.DefaultProtocolVersion
-)
+    protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
+    supportedProtocolVersions: List[ProtocolVersion] =
+      McpServerOptions.DefaultSupportedProtocolVersions
+):
+  private[server] val protocolVersionRegistry: ProtocolVersionRegistry =
+    val preferredProtocolVersion = ProtocolVersion
+      .from(protocolVersion)
+      .getOrElse:
+        throw new IllegalArgumentException(
+          s"Unsupported MCP protocol version: $protocolVersion"
+        )
+    ProtocolVersionRegistry(supportedProtocolVersions, preferredProtocolVersion)
 
 object McpServerOptions:
   val DefaultProtocolVersion: String = ProtocolVersion.Latest.name
+  val DefaultSupportedProtocolVersions: List[ProtocolVersion] =
+    ProtocolVersion.Supported
 
 /** Tool and resource definitions exposed by one MCP server instance. */
 final case class McpServerDefinition[F[_]](
@@ -70,6 +93,7 @@ class McpServerHandler[F[_]](
     options: McpServerOptions
 ):
   private val logger = LoggerFactory.getLogger(classOf[McpServerHandler[_]])
+  private val protocolVersions = options.protocolVersionRegistry
   private val toolsByName = definition.tools.map(t => t.name -> t).toMap
   private val resourcesByUri =
     definition.resources.map(resource => resource.uri -> resource).toMap
@@ -81,19 +105,32 @@ class McpServerHandler[F[_]](
 
   /** Handle one decoded MCP transport request. */
   def handle(request: McpServerRequest)(using MonadError[F]): F[McpResponse] =
-    handleJsonRpc(request.body, request.headers)
+    handleWithMetadata(request).map(_.response)
+
+  /** Handle one decoded MCP transport request and return protocol metadata. */
+  def handleWithMetadata(
+      request: McpServerRequest
+  )(using MonadError[F]): F[McpServerResult] =
+    handleJsonRpcWithMetadata(request.body, request.headers)
 
   /** Handle one JSON-RPC payload with already extracted transport headers. */
   def handleJsonRpc(
       request: Json,
       headers: Seq[Header]
   )(using MonadError[F]): F[McpResponse] =
-    doHandleJsonRpc(request, headers).map: response =>
+    handleJsonRpcWithMetadata(request, headers).map(_.response)
+
+  /** Handle one JSON-RPC payload and return protocol metadata. */
+  def handleJsonRpcWithMetadata(
+      request: Json,
+      headers: Seq[Header]
+  )(using MonadError[F]): F[McpServerResult] =
+    doHandleJsonRpc(request, headers).map: result =>
       logger.debug(
-        s"Request: $request, response: ${response.statusCode}, " +
-          s"body: ${response.body}"
+        s"Request: $request, response: ${result.response.statusCode}, " +
+          s"body: ${result.response.body}"
       )
-      response.withNullsDroppedDeep
+      result.copy(response = result.response.withNullsDroppedDeep)
 
   /** Converts a ServerTool to its protocol definition. */
   private def toolToDefinition(tool: ServerTool[?, F]): ToolDefinition =
@@ -134,12 +171,11 @@ class McpServerHandler[F[_]](
   private def handleInitialize(
       params: Option[Json],
       id: RequestId
-  ): JSONRPCMessage.Response =
-    val negotiated =
+  ): (JSONRPCMessage.Response, ProtocolVersion) =
+    val requested =
       params
         .flatMap(_.hcursor.downField("protocolVersion").as[String].toOption)
-        .map(ProtocolVersion.negotiate(_).name)
-        .getOrElse(options.protocolVersion)
+    val negotiated = protocolVersions.negotiate(requested)
     val capabilities =
       ServerCapabilities(
         tools = Some(ServerToolsCapability(listChanged = Some(false))),
@@ -149,11 +185,11 @@ class McpServerHandler[F[_]](
       )
     val result =
       InitializeResult(
-        protocolVersion = negotiated,
+        protocolVersion = negotiated.name,
         capabilities = capabilities,
         serverInfo = Implementation(options.name, options.version)
       )
-    JSONRPCMessage.Response(id = id, result = result.asJson)
+    (JSONRPCMessage.Response(id = id, result = result.asJson), negotiated)
 
   /** Handles the 'tools/list' JSON-RPC method. */
   private def handleToolsList(id: RequestId): JSONRPCMessage.Response =
@@ -290,8 +326,8 @@ class McpServerHandler[F[_]](
   private def doHandleJsonRpc(
       request: Json,
       headers: Seq[Header]
-  )(using MonadError[F]): F[McpResponse] =
-    if request.isArray then rejectBatchRequest.unit
+  )(using MonadError[F]): F[McpServerResult] =
+    if request.isArray then McpServerResult(rejectBatchRequest).unit
     else request.as[JSONRPCMessage] match
       case Left(err) =>
         val errorResponse =
@@ -300,27 +336,44 @@ class McpServerHandler[F[_]](
             JSONRPCErrorCodes.ParseError.code,
             s"Parse error: ${err.message}"
           )
-        McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson).unit
+        McpServerResult(
+          McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
+        ).unit
       case Right(JSONRPCMessage.Request(_, method, params, id)) =>
         method match
           case "tools/list" =>
             val response = handleToolsList(id)
-            McpResponse.JsonResponse((response: JSONRPCMessage).asJson).unit
+            McpServerResult(
+              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+            ).unit
           case "resources/list" =>
             val response = handleResourcesList(id)
-            McpResponse.JsonResponse((response: JSONRPCMessage).asJson).unit
+            McpServerResult(
+              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+            ).unit
           case "tools/call" =>
             handleToolsCall(params, id, headers).map: response =>
-              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+              McpServerResult(
+                McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+              )
           case "resources/read" =>
             handleResourcesRead(params, id, headers).map: response =>
-              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+              McpServerResult(
+                McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+              )
           case "initialize" =>
-            val response = handleInitialize(params, id)
-            McpResponse.JsonResponse((response: JSONRPCMessage).asJson).unit
+            val (response, negotiatedVersion) = handleInitialize(params, id)
+            McpServerResult(
+              McpResponse.JsonResponse((response: JSONRPCMessage).asJson),
+              McpResponseMetadata(
+                negotiatedProtocolVersion = Some(negotiatedVersion)
+              )
+            ).unit
           case "ping" =>
             val response = JSONRPCMessage.Response(id = id, result = Json.obj())
-            McpResponse.JsonResponse((response: JSONRPCMessage).asJson).unit
+            McpServerResult(
+              McpResponse.JsonResponse((response: JSONRPCMessage).asJson)
+            ).unit
           case other =>
             val errorResponse =
               protocolError(
@@ -328,11 +381,12 @@ class McpServerHandler[F[_]](
                 JSONRPCErrorCodes.MethodNotFound.code,
                 s"Unknown method: $other"
               )
-            McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
-              .unit
+            McpServerResult(
+              McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
+            ).unit
       case Right(notification: JSONRPCMessage.Notification) =>
         logger.debug(s"Received notification: ${notification.method}")
-        McpResponse.EmptyAcceptResponse.unit
+        McpServerResult(McpResponse.EmptyAcceptResponse).unit
       case Right(_) =>
         val errorResponse =
           protocolError(
@@ -340,7 +394,9 @@ class McpServerHandler[F[_]](
             JSONRPCErrorCodes.InvalidRequest.code,
             "Invalid request type"
           )
-        McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson).unit
+        McpServerResult(
+          McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
+        ).unit
 
   private def rejectBatchRequest: McpResponse =
     val errorResponse =
@@ -372,8 +428,19 @@ class McpHandler[F[_]](
   def handle(request: McpServerRequest)(using MonadError[F]): F[McpResponse] =
     delegate.handle(request)
 
+  def handleWithMetadata(
+      request: McpServerRequest
+  )(using MonadError[F]): F[McpServerResult] =
+    delegate.handleWithMetadata(request)
+
   def handleJsonRpc(
       request: Json,
       headers: Seq[Header]
   )(using MonadError[F]): F[McpResponse] =
     delegate.handleJsonRpc(request, headers)
+
+  def handleJsonRpcWithMetadata(
+      request: Json,
+      headers: Seq[Header]
+  )(using MonadError[F]): F[McpServerResult] =
+    delegate.handleJsonRpcWithMetadata(request, headers)
