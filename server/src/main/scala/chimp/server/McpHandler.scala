@@ -291,7 +291,8 @@ class McpServerHandler[F[_]](
       request: Json,
       headers: Seq[Header]
   )(using MonadError[F]): F[McpResponse] =
-    request.as[JSONRPCMessage] match
+    if request.isArray then rejectBatchRequest.unit
+    else request.as[JSONRPCMessage] match
       case Left(err) =>
         val errorResponse =
           protocolError(
@@ -340,6 +341,15 @@ class McpServerHandler[F[_]](
             "Invalid request type"
           )
         McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson).unit
+
+  private def rejectBatchRequest: McpResponse =
+    val errorResponse =
+      protocolError(
+        RequestId("null"),
+        JSONRPCErrorCodes.InvalidRequest.code,
+        "JSON-RPC batch requests are not supported"
+      )
+    McpResponse.JsonResponse((errorResponse: JSONRPCMessage).asJson)
 
 /** Backwards-compatible wrapper around [[McpServerHandler]]. */
 class McpHandler[F[_]](

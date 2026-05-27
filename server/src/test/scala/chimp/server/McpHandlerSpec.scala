@@ -151,6 +151,42 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         resultObj.protocolVersion shouldBe "2025-06-18"
       case _ => fail("Expected Response")
 
+  it should "reject JSON-RPC batch arrays without dispatching subrequests" in:
+    // Given
+    var callCount = 0
+    val countingTool = tool("count")
+      .description("Counts calls.")
+      .input[EchoInput]
+      .handle: input =>
+        callCount = callCount + 1
+        Right(input.message)
+    val batchHandler =
+      McpServerHandler(
+        McpServerDefinition(List(countingTool)),
+        McpServerOptions(protocolVersion = "2025-06-18")
+      )
+    val params = Json.obj(
+      "name" -> Json.fromString("count"),
+      "arguments" -> Json.obj("message" -> Json.fromString("run"))
+    )
+    val request1: JSONRPCMessage =
+      Request(method = "tools/call", params = Some(params), id = RequestId("b1"))
+    val request2: JSONRPCMessage =
+      Request(method = "tools/call", params = Some(params), id = RequestId("b2"))
+    val batch = Json.arr(request1.asJson, request2.asJson)
+    // When
+    val response = batchHandler.handleJsonRpc(batch, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Error(_, _, error) =>
+        error.code shouldBe InvalidRequest.code
+        error.message should include("batch requests are not supported")
+        callCount shouldBe 0
+      case _ => fail("Expected Error")
+
   "McpHandler" should "respond to initialize" in:
     // Given
     val req: JSONRPCMessage = Request(method = "initialize", id = RequestId("1"))
