@@ -14,7 +14,7 @@ Integrates with any Scala stack, using any of the HTTP server implementations su
 Add the dependency to your `build.sbt`:
 
 ```scala
-libraryDependencies += "com.softwaremill.chimp" %% "core" % "0.1.8"
+libraryDependencies += "com.softwaremill.chimp" %% "chimp-server" % "0.1.7-aion.2"
 ```
 
 ### Example: the simplest MCP server
@@ -22,7 +22,7 @@ libraryDependencies += "com.softwaremill.chimp" %% "core" % "0.1.8"
 Below is a self-contained, [scala-cli](https://scala-cli.virtuslab.org)-runnable example:
 
 ```scala
-//> using dep com.softwaremill.chimp::core:0.1.8
+//> using dep com.softwaremill.chimp::chimp-server:0.1.7-aion.2
 
 import chimp.*
 import sttp.tapir.*
@@ -38,11 +38,11 @@ case class AdderInput(a: Int, b: Int) derives io.circe.Codec, Schema
   // combine the tool description with the server-side logic
   val adderServerTool = adderTool.handle(i => Right(s"The result is ${i.a + i.b}"))
 
-  // create the MCP server endpoint; it will be available at http://localhost:8080/mcp  
-  val mcpServerEndpoint = mcpEndpoint(List(adderServerTool), List("mcp"))
+  // create the MCP server endpoints; they will be available at http://localhost:8080/mcp
+  val mcpServerEndpoints = mcpEndpoints(List(adderServerTool), List("mcp"))
 
   // start the server
-  NettySyncServer().port(8080).addEndpoint(mcpServerEndpoint).startAndWait()
+  NettySyncServer().port(8080).addEndpoints(mcpServerEndpoints).startAndWait()
 ```
 
 ### More examples
@@ -53,7 +53,7 @@ Are available [here](https://github.com/softwaremill/chimp/tree/master/examples/
 
 ## MCP Protocol
 
-Chimp implements the HTTP transport of the [MCP protocol](https://modelcontextprotocol.io/specification/2025-03-26) (version **2025-03-26**). Tools and resources are supported, via the following JSON-RPC commands:
+Chimp implements the HTTP transport of the [MCP protocol](https://modelcontextprotocol.io/specification) with protocol negotiation for the modeled MCP protocol versions. Tools and resources are supported, via the following JSON-RPC commands:
 
 - Initialization and capabilities negotiation (`initialize`)
 - Listing available tools (`tools/list`)
@@ -62,6 +62,7 @@ Chimp implements the HTTP transport of the [MCP protocol](https://modelcontextpr
 - Reading resource contents (`resources/read`)
 
 All requests and responses use JSON-RPC 2.0. Tool input schemas are described using JSON Schema, auto-generated from Scala types.
+The Streamable HTTP helper `mcpEndpoints` exposes POST handling and an explicit GET `405 Method Not Allowed` response when the server does not offer an SSE stream.
 
 ---
 
@@ -71,11 +72,13 @@ All requests and responses use JSON-RPC 2.0. Tool input schemas are described us
 - Use `resource(uri)` to start defining a resource.
 - Add a description and annotations for metadata and hints.
 - Specify the input type (must have a Circe `Codec` and Tapir `Schema`).
+- Optionally specify the output type using `output[O]` to advertise `outputSchema`.
 - Provide the server logic as a function from input to `Either[String, String]` (or a generic effect type).
   - Use `handle` to connect the tool definition with the server logic when the use of headers is not required.
   - Use `handleWithHeaders` to connect the tool definition with the server logic when headers are required.
+  - Use `handleOutput` or `handleOutputWithHeaders` when returning structured tool content.
 - Provide resource read logic using `handle`/`handleWithHeaders`.
-- Create a Tapir endpoint by providing your tools (and optionally resources) to `mcpEndpoint`
+- Create Tapir endpoints by providing your tools (and optionally resources) to `mcpEndpoints`.
 - Start an HTTP server using your preferred Tapir server interpreter.
 
 ---
