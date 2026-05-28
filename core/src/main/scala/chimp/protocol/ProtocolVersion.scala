@@ -3,6 +3,7 @@ package chimp.protocol
 import io.circe.{Decoder, Encoder, Json}
 
 enum ProtocolVersion(val name: String):
+  case V2025_03_26 extends ProtocolVersion("2025-03-26")
   case V2025_06_18 extends ProtocolVersion("2025-06-18")
   case V2025_11_25 extends ProtocolVersion("2025-11-25")
 
