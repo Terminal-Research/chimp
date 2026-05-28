@@ -33,10 +33,17 @@ enum McpResponse:
     case ErrorResponse(_, json) => json
 
   def withNullsDroppedDeep: McpResponse = this match
-    case JsonResponse(json)        => JsonResponse(json.deepDropNullValues)
+    case JsonResponse(json) =>
+      JsonResponse(dropNullsPreservingJsonRpcId(json))
     case EmptyAcceptResponse       => this
     case ErrorResponse(code, json) =>
-      ErrorResponse(code, json.map(_.deepDropNullValues))
+      ErrorResponse(code, json.map(dropNullsPreservingJsonRpcId))
+
+  private def dropNullsPreservingJsonRpcId(json: Json): Json =
+    val dropped = json.deepDropNullValues
+    val idIsNull = json.hcursor.downField("id").focus.exists(_.isNull)
+    if idIsNull then dropped.deepMerge(Json.obj("id" -> Json.Null))
+    else dropped
 
 /** Lifecycle phase associated with an MCP session. */
 enum McpSessionPhase:
@@ -385,7 +392,7 @@ class McpServerHandler[F[_]](
         case Left(err) =>
           val errorResponse =
             protocolError(
-              RequestId("null"),
+              RequestId.NullValue,
               JSONRPCErrorCodes.ParseError.code,
               s"Parse error: ${err.message}"
             )
@@ -407,7 +414,7 @@ class McpServerHandler[F[_]](
         case Right(_) =>
           val errorResponse =
             protocolError(
-              RequestId("null"),
+              RequestId.NullValue,
               JSONRPCErrorCodes.InvalidRequest.code,
               "Invalid request type"
             )
@@ -547,7 +554,7 @@ class McpServerHandler[F[_]](
   private def rejectBatchRequest: McpResponse =
     val errorResponse =
       protocolError(
-        RequestId("null"),
+        RequestId.NullValue,
         JSONRPCErrorCodes.InvalidRequest.code,
         "JSON-RPC batch requests are not supported"
       )

@@ -450,7 +450,9 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
       respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
     // Then
     resp match
-      case Error(_, _, error) =>
+      case Error(_, id, error) =>
+        id shouldBe RequestId.NullValue
+        respJson.hcursor.downField("id").focus shouldBe Some(Json.Null)
         error.code shouldBe InvalidRequest.code
         error.message should include("batch requests are not supported")
         callCount shouldBe 0

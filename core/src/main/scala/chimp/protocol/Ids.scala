@@ -1,16 +1,29 @@
 package chimp.protocol
 
-import io.circe.{Codec, Decoder, Encoder, Json}
+import io.circe.{Codec, Decoder, DecodingFailure, Encoder, Json}
 
-opaque type RequestId = String | Int
+opaque type RequestId = String | Int | Null
 object RequestId:
   def apply(value: String | Int): RequestId = value
-  def unapply(id: RequestId): Option[String | Int] = Some(id)
+  val NullValue: RequestId = null
+  def unapply(id: RequestId): Option[String | Int | Null] = Some(id)
   given encoder: Encoder[RequestId] = Encoder.instance:
+    case null      => Json.Null
     case s: String => Json.fromString(s)
     case i: Int    => Json.fromInt(i)
   given decoder: Decoder[RequestId] = Decoder.instance: c =>
-    c.as[String].map(RequestId(_)).orElse(c.as[Int].map(RequestId(_)))
+    c.as[String]
+      .map(RequestId(_))
+      .orElse(c.as[Int].map(RequestId(_)))
+      .orElse:
+        Either.cond(
+          c.value.isNull,
+          NullValue,
+          DecodingFailure(
+            "RequestId must be a string, integer, or null",
+            c.history
+          )
+        )
   given codec: Codec[RequestId] = Codec.from(decoder, encoder)
 
 opaque type ProgressToken = String | Int
