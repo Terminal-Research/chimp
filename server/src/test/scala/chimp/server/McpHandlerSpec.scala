@@ -49,6 +49,12 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
     .input[AddInput]
     .handleOutput(in => ToolOutput.text((in.a + in.b).toString))
 
+  val invalidTextStructuredTool = tool("invalidTextStructured")
+    .description("Declares structured output but uses text logic.")
+    .output[AddOutput]
+    .input[AddInput]
+    .handle(in => Right((in.a + in.b).toString))
+
   val errorTool = tool("fail")
     .description("Always fails.")
     .input[EchoInput]
@@ -107,6 +113,8 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
     McpHandler(List(structuredAddTool), "Chimp MCP server", "1.0.0", true)
   val invalidStructuredHandler =
     McpHandler(List(invalidStructuredTool), "Chimp MCP server", "1.0.0", true)
+  val invalidTextStructuredHandler =
+    McpHandler(List(invalidTextStructuredTool), "Chimp MCP server", "1.0.0", true)
   val transportHandler = McpServerHandler(
     McpServerDefinition(List(headerEchoTool)),
     McpServerOptions(
@@ -527,6 +535,31 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
     val json = req.asJson
     // When
     val response = invalidStructuredHandler.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Expected error response"))
+    // Then
+    resp match
+      case Error(_, _, error) =>
+        error.code shouldBe InternalError.code
+        error.message should include("declared outputSchema")
+      case _ => fail("Expected Error")
+
+  it should "reject schema-declared text tool output without structured content" in:
+    // Given
+    val params = Json.obj(
+      "name" -> Json.fromString("invalidTextStructured"),
+      "arguments" -> Json.obj("a" -> Json.fromInt(2), "b" -> Json.fromInt(3))
+    )
+    val req: JSONRPCMessage =
+      Request(
+        method = "tools/call",
+        params = Some(params),
+        id = RequestId("structured-text-invalid")
+      )
+    val json = req.asJson
+    // When
+    val response = invalidTextStructuredHandler.handleJsonRpc(json, Seq.empty)
     val respJson = extractJsonFromResponse(response)
     val resp =
       respJson.as[JSONRPCMessage].getOrElse(fail("Expected error response"))

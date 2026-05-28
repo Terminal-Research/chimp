@@ -331,19 +331,9 @@ class McpServerHandler[F[_]](
       case ServerToolLogic.Text(logic) =>
         logic(decodedInput, headers).map:
           case Right(result) =>
-            val callResult =
-              CallToolResult(
-                content = List(ToolContent.Text(text = result)),
-                isError = false
-              )
-            JSONRPCMessage.Response(id = id, result = callResult.asJson)
+            handleToolOutput(tool, ToolOutput.text(result), id)
           case Left(errorMsg) =>
-            val callResult =
-              CallToolResult(
-                content = List(ToolContent.Text(text = errorMsg)),
-                isError = true
-              )
-            JSONRPCMessage.Response(id = id, result = callResult.asJson)
+            handleToolOutput(tool, ToolOutput.error(errorMsg), id)
       case ServerToolLogic.Output(logic) =>
         logic(decodedInput, headers).map: output =>
           handleToolOutput(tool, output, id)
