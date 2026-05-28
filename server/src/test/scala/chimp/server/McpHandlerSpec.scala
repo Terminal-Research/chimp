@@ -327,6 +327,31 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         error.message should include("initialized notification")
       case _ => fail("Expected Error")
 
+  it should "reject initialize after a session is operational" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(
+        method = "initialize",
+        id = RequestId("phase-repeat-initialize")
+      )
+    val transportRequest =
+      McpServerRequest(
+        body = req.asJson,
+        sessionPhase = McpSessionPhase.Operational
+      )
+    // When
+    val result = handler.handleWithMetadata(transportRequest)
+    val respJson = extractJsonFromResponse(result.response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Expected error response"))
+    // Then
+    result.metadata.nextSessionPhase shouldBe None
+    resp match
+      case Error(_, _, error) =>
+        error.code shouldBe InvalidRequest.code
+        error.message should include("initialize cannot be repeated")
+      case _ => fail("Expected Error")
+
   it should "accept supported MCP protocol version headers" in:
     // Given
     val req: JSONRPCMessage =

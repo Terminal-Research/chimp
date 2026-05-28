@@ -40,7 +40,7 @@ enum McpResponse:
 
 /** Lifecycle phase associated with an MCP session. */
 enum McpSessionPhase:
-  case Uninitialized, Initialized, Operational
+  case Untracked, Uninitialized, Initialized, Operational
 
 /** Metadata produced while handling an MCP request. */
 final case class McpResponseMetadata(
@@ -58,7 +58,7 @@ final case class McpServerResult(
 final case class McpServerRequest(
     body: Json,
     headers: Seq[Header] = Seq.empty,
-    sessionPhase: McpSessionPhase = McpSessionPhase.Operational
+    sessionPhase: McpSessionPhase = McpSessionPhase.Untracked
 )
 
 /** Server metadata and serialization options for an MCP handler. */
@@ -140,7 +140,7 @@ class McpServerHandler[F[_]](
   def handleJsonRpcWithMetadata(
       request: Json,
       headers: Seq[Header],
-      sessionPhase: McpSessionPhase = McpSessionPhase.Operational
+      sessionPhase: McpSessionPhase = McpSessionPhase.Untracked
   )(using MonadError[F]): F[McpServerResult] =
     doHandleJsonRpc(request, headers, sessionPhase).map: result =>
       logger.debug(
@@ -496,6 +496,8 @@ class McpServerHandler[F[_]](
           "MCP initialized notification must be received before request " +
             s"method: $method"
         )
+      case McpSessionPhase.Operational if method == "initialize" =>
+        Some("MCP initialize cannot be repeated after initialization")
       case _ =>
         None
 
