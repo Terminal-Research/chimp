@@ -531,6 +531,27 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         resultObj.tools.map(_.name).toSet shouldBe Set("echo", "add", "fail", "headerEcho")
       case _ => fail("Expected Response")
 
+  it should "emit canonical draft 2020-12 schema metadata in tool definitions" in:
+    // Given
+    val req: JSONRPCMessage =
+      Request(method = "tools/list", id = RequestId("schema-metadata"))
+    val json = req.asJson
+    // When
+    val response = handler.handleJsonRpc(json, Seq.empty)
+    val respJson = extractJsonFromResponse(response)
+    val resp =
+      respJson.as[JSONRPCMessage].getOrElse(fail("Failed to decode response"))
+    // Then
+    resp match
+      case Response(_, _, result) =>
+        val resultObj =
+          result.as[ListToolsResponse].getOrElse(fail("Failed to decode result"))
+        val echoTool = resultObj.tools.find(_.name == "echo").get
+        echoTool.inputSchema.hcursor
+          .get[String]("$schema")
+          .toOption shouldBe Some(McpServerOptions.JsonSchemaDraft202012Uri)
+      case _ => fail("Expected Response")
+
   it should "include output schemas in tool definitions" in:
     // Given
     val req: JSONRPCMessage =

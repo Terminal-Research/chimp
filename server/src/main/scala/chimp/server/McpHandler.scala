@@ -86,6 +86,8 @@ final case class McpServerOptions(
     ProtocolVersionRegistry(supportedProtocolVersions, preferredProtocolVersion)
 
 object McpServerOptions:
+  private[server] val JsonSchemaDraft202012Uri: String =
+    "https://json-schema.org/draft/2020-12/schema"
   val DefaultProtocolVersion: String = ProtocolVersion.Latest.name
   val DefaultSupportedProtocolVersions: List[ProtocolVersion] =
     ProtocolVersion.Supported
@@ -180,7 +182,7 @@ class McpServerHandler[F[_]](
         markOptionsAsNullable = false
       )
     val schemaJson =
-      if options.showJsonSchemaMetadata then base
+      if options.showJsonSchemaMetadata then base.copy($schema = Some(McpServerOptions.JsonSchemaDraft202012Uri))
       else base.copy($schema = None)
     schemaJson.asJson
 
