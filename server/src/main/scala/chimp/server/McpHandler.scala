@@ -152,11 +152,15 @@ class McpServerHandler[F[_]](
       sessionPhase: McpSessionPhase = McpSessionPhase.Untracked
   )(using MonadError[F]): F[McpServerResult] =
     doHandleJsonRpc(request, headers, sessionPhase).map: result =>
-      logger.debug(
-        s"Request: $request, response: ${result.response.statusCode}, " +
-          s"body: ${result.response.body}"
-      )
-      result.copy(response = result.response.withNullsDroppedDeep)
+      val normalized =
+        result.copy(response = result.response.withNullsDroppedDeep)
+      if logger.isDebugEnabled then
+        val bodyCharacters = normalized.response.body.fold(0)(_.noSpaces.length)
+        logger.debug(
+          s"Request: $request, response: ${normalized.response.statusCode}, " +
+            s"body characters: $bodyCharacters"
+        )
+      normalized
 
   /** Converts a ServerTool to its protocol definition. */
   private def toolToDefinition(tool: ServerTool[?, F]): ToolDefinition =
