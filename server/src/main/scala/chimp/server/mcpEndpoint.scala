@@ -20,6 +20,8 @@ import sttp.tapir.server.ServerEndpoint
   *   The path components at which to expose the MCP server.
   * @param resources
   *   The list of resources to expose via `resources/list` and `resources/read`.
+  * @param title
+  *   Optional human-readable server title returned by compatible revisions.
   *
   * @tparam F
   *   The effect type. Might be `Identity` for a endpoints with synchronous logic.
@@ -33,7 +35,8 @@ def mcpEndpoints[F[_]](
     resources: List[ServerResource[F]] = Nil,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
     supportedProtocolVersions: List[ProtocolVersion] = McpServerOptions.DefaultSupportedProtocolVersions,
-    originPolicy: OriginPolicy = OriginPolicy.AllowAll
+    originPolicy: OriginPolicy = OriginPolicy.AllowAll,
+    title: Option[String] = None
 ): List[ServerEndpoint[Any, F]] =
   val mcpHandler =
     McpServerHandler(
@@ -43,7 +46,8 @@ def mcpEndpoints[F[_]](
         version = version,
         showJsonSchemaMetadata = showJsonSchemaMetadata,
         protocolVersion = protocolVersion,
-        supportedProtocolVersions = supportedProtocolVersions
+        supportedProtocolVersions = supportedProtocolVersions,
+        title = title
       )
     )
   List(
@@ -61,7 +65,8 @@ def mcpEndpoint[F[_]](
     resources: List[ServerResource[F]] = Nil,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
     supportedProtocolVersions: List[ProtocolVersion] = McpServerOptions.DefaultSupportedProtocolVersions,
-    originPolicy: OriginPolicy = OriginPolicy.AllowAll
+    originPolicy: OriginPolicy = OriginPolicy.AllowAll,
+    title: Option[String] = None
 ): ServerEndpoint[Any, F] =
   mcpEndpoints(
     tools,
@@ -72,7 +77,8 @@ def mcpEndpoint[F[_]](
     resources,
     protocolVersion,
     supportedProtocolVersions,
-    originPolicy
+    originPolicy,
+    title
   ).head
 
 private def mcpPostEndpoint[F[_]](

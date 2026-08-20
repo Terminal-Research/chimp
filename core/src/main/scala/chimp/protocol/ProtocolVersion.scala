@@ -7,6 +7,11 @@ enum ProtocolVersion(val name: String):
   case V2025_06_18 extends ProtocolVersion("2025-06-18")
   case V2025_11_25 extends ProtocolVersion("2025-11-25")
 
+  /** Whether this revision supports `Implementation.title`. */
+  def supportsImplementationTitle: Boolean = this match
+    case V2025_03_26 => false
+    case V2025_06_18 | V2025_11_25 => true
+
 final case class ProtocolVersionRegistry(
     supportedVersions: List[ProtocolVersion],
     preferredVersion: ProtocolVersion

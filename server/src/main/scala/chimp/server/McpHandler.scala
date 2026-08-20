@@ -74,7 +74,8 @@ final case class McpServerOptions(
     version: String = "1.0.0",
     showJsonSchemaMetadata: Boolean = true,
     protocolVersion: String = McpServerOptions.DefaultProtocolVersion,
-    supportedProtocolVersions: List[ProtocolVersion] = McpServerOptions.DefaultSupportedProtocolVersions
+    supportedProtocolVersions: List[ProtocolVersion] = McpServerOptions.DefaultSupportedProtocolVersions,
+    title: Option[String] = None
 ):
   private[server] val protocolVersionRegistry: ProtocolVersionRegistry =
     val preferredProtocolVersion = ProtocolVersion
@@ -220,7 +221,13 @@ class McpServerHandler[F[_]](
       InitializeResult(
         protocolVersion = negotiated.name,
         capabilities = capabilities,
-        serverInfo = Implementation(options.name, options.version)
+        serverInfo = Implementation(
+          name = options.name,
+          version = options.version,
+          title = Option.when(negotiated.supportsImplementationTitle)(
+            options.title
+          ).flatten
+        )
       )
     (JSONRPCMessage.Response(id = id, result = result.asJson), negotiated)
 
@@ -572,7 +579,8 @@ class McpHandler[F[_]](
     name: String,
     version: String,
     showJsonSchemaMetadata: Boolean,
-    resources: List[ServerResource[F]] = Nil
+    resources: List[ServerResource[F]] = Nil,
+    title: Option[String] = None
 ):
   private val delegate =
     McpServerHandler(
@@ -580,7 +588,8 @@ class McpHandler[F[_]](
       McpServerOptions(
         name = name,
         version = version,
-        showJsonSchemaMetadata = showJsonSchemaMetadata
+        showJsonSchemaMetadata = showJsonSchemaMetadata,
+        title = title
       )
     )
 

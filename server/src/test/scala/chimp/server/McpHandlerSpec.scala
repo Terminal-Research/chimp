@@ -120,7 +120,8 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
     McpServerOptions(
       name = "Transport handler test",
       version = "1.0.0",
-      protocolVersion = "2025-06-18"
+      protocolVersion = "2025-06-18",
+      title = Some("Transport Handler")
     )
   )
 
@@ -188,6 +189,7 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
         val resultObj =
           result.as[InitializeResult].getOrElse(fail("Failed to decode result"))
         resultObj.protocolVersion shouldBe "2025-06-18"
+        resultObj.serverInfo.title shouldBe Some("Transport Handler")
       case _ => fail("Expected Response")
 
   it should "negotiate a supported protocol version from initialize" in:
@@ -228,7 +230,8 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
           supportedProtocolVersions = List(
             ProtocolVersion.V2025_03_26,
             ProtocolVersion.V2025_06_18
-          )
+          ),
+          title = Some("Versioned Chimp Server")
         )
       )
     val params = Json.obj(
@@ -255,6 +258,11 @@ class McpHandlerSpec extends AnyFlatSpec with Matchers:
           .as[InitializeResult]
           .getOrElse(fail("Failed to decode result"))
         resultObj.protocolVersion shouldBe "2025-03-26"
+        resultObj.serverInfo.title shouldBe None
+        responseResult.hcursor
+          .downField("serverInfo")
+          .downField("title")
+          .focus shouldBe None
       case _ => fail("Expected Response")
 
   it should "fall back to the preferred version when requested version is unsupported" in:
